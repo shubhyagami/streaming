@@ -401,26 +401,34 @@ public class YouTubeService {
         throw lastError != null ? lastError : new IOException("All Piped instances failed");
     }
 
-    // ===== Method 2: yt-dlp =====
+    private synchronized String resolveYtDlpPath() {
+        String[] paths = {ytdlpPath, "/usr/local/bin/yt-dlp", "/usr/bin/yt-dlp", "/bin/yt-dlp"};
+        for (String p : paths) {
+            try {
+                Process check = new ProcessBuilder(p, "--version").start();
+                if (check.waitFor(5, TimeUnit.SECONDS) && check.exitValue() == 0) {
+                    try (BufferedReader r = new BufferedReader(new InputStreamReader(check.getInputStream()))) {
+                        String version = r.readLine();
+                        log.info("Found yt-dlp at {} (version {})", p, version);
+                    }
+                    return p;
+                }
+            } catch (Exception e) {
+                // Ignore and try next
+            }
+        }
+        return null;
+    }
 
     private Path downloadWithYtDlp(String videoId) throws IOException, InterruptedException {
         Path dir = Paths.get(tempDir);
         Files.createDirectories(dir);
 
-        // First check if yt-dlp is available
-        try {
-            Process check = new ProcessBuilder(ytdlpPath, "--version").start();
-            boolean done = check.waitFor(5, TimeUnit.SECONDS);
-            if (!done || check.exitValue() != 0) {
-                throw new IOException("yt-dlp not available on this system");
-            }
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(check.getInputStream()))) {
-                String version = r.readLine();
-                log.info("yt-dlp version: {}", version);
-            }
-        } catch (IOException e) {
-            throw new IOException("yt-dlp is not installed: " + e.getMessage());
+        String resolvedPath = resolveYtDlpPath();
+        if (resolvedPath == null) {
+            throw new IOException("yt-dlp is not installed or not available in standard paths (/usr/local/bin, etc)");
         }
+        ytdlpPath = resolvedPath; // Cache for next time
 
         String videoUrl = "https://www.youtube.com/watch?v=" + videoId;
 
