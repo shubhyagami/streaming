@@ -55,6 +55,10 @@ public class YouTubeService {
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Origin", "https://www.youtube.com")
             .header("Referer", "https://www.youtube.com")
+            .header("Cookie", "CONSENT=YES+cb; SOCS=CAISHAhCEhcKAzEwOBIENTcyNBghMACoBQ")
+            .header("sec-ch-ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"")
+            .header("sec-ch-ua-mobile", "?0")
+            .header("sec-ch-ua-platform", "\"Windows\"")
             .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
             .build();
 
@@ -268,6 +272,7 @@ public class YouTubeService {
 
         // Try multiple Innertube clients in order of permissiveness
         String[][] clients = {
+            {"WEB_EMBEDDED_PLAYER", "1.0", ""},
             {"ANDROID_MUSIC", "6.27.51", "30"},
             {"ANDROID", "19.09.37", "30"},
             {"WEB", "2.20240201.08.00", ""}
@@ -308,6 +313,13 @@ public class YouTubeService {
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Origin", "https://www.youtube.com")
             .header("Referer", "https://www.youtube.com")
+            .header("Cookie", "CONSENT=YES+cb; SOCS=CAISHAhCEhcKAzEwOBIENTcyNBghMACoBQ; __Secure-ENID=17.SE=; YSC=DwKYllHNwC4; VISITOR_INFO1_LIVE=ST1TiqP3p9k")
+            .header("sec-ch-ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"")
+            .header("sec-ch-ua-mobile", "?0")
+            .header("sec-ch-ua-platform", "\"Windows\"")
+            .header("Sec-Fetch-Dest", "empty")
+            .header("Sec-Fetch-Mode", "same-origin")
+            .header("Sec-Fetch-Site", "same-origin")
             .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
             .build();
 
