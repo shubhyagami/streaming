@@ -3,6 +3,8 @@ package com.poweramp.controller;
 import com.poweramp.service.SpotifyService;
 import com.poweramp.service.TempFileManager;
 import com.poweramp.service.YouTubeService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -16,9 +18,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 
 @RestController
 public class StreamController {
+
+    private static final Logger log = LoggerFactory.getLogger(StreamController.class);
 
     private final YouTubeService ytService;
     private final SpotifyService spotifyService;
@@ -47,7 +53,7 @@ public class StreamController {
             try {
                 return ytService.downloadAudio(videoId);
             } catch (Exception e) {
-                throw new RuntimeException("Download failed: " + e.getMessage(), e);
+                throw new RuntimeException(e.getMessage(), e);
             }
         });
 
@@ -65,19 +71,18 @@ public class StreamController {
                 "title", title,
                 "contentType", contentType
             ));
-        } catch (java.util.concurrent.TimeoutException e) {
+        } catch (TimeoutException e) {
             downloads.remove(videoId);
             future.cancel(true);
+            log.error("Download timed out for videoId={}", videoId);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", "Download timed out. The server may be under heavy load."));
+                .body(Map.of("error", "Download timed out after 3 minutes. Please try again."));
         } catch (Exception e) {
             downloads.remove(videoId);
-            String msg = e.getMessage();
-            if (msg != null && msg.contains("bot")) {
-                msg = "YouTube is blocking this request. Please try again later.";
-            }
+            String msg = extractRootCause(e);
+            log.error("Download failed for videoId={}: {}", videoId, msg);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", msg != null ? msg : "Unknown download error"));
+                .body(Map.of("error", msg));
         }
     }
 
@@ -103,7 +108,7 @@ public class StreamController {
                     ? spotifyService.downloadAudio(audioUrl, id)
                     : ytService.downloadAudio(videoId);
             } catch (Exception e) {
-                throw new RuntimeException("Download failed: " + e.getMessage(), e);
+                throw new RuntimeException(e.getMessage(), e);
             }
         });
 
@@ -122,19 +127,18 @@ public class StreamController {
                 "title", title,
                 "contentType", contentType
             ));
-        } catch (java.util.concurrent.TimeoutException e) {
+        } catch (TimeoutException e) {
             downloads.remove(key);
             future.cancel(true);
+            log.error("Spotify download timed out for key={}", key);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", "Download timed out. The server may be under heavy load."));
+                .body(Map.of("error", "Download timed out after 3 minutes. Please try again."));
         } catch (Exception e) {
             downloads.remove(key);
-            String msg = e.getMessage();
-            if (msg != null && msg.contains("bot")) {
-                msg = "YouTube is blocking this request. Please try again later.";
-            }
+            String msg = extractRootCause(e);
+            log.error("Spotify download failed for key={}: {}", key, msg);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", msg != null ? msg : "Unknown download error"));
+                .body(Map.of("error", msg));
         }
     }
 
@@ -176,6 +180,37 @@ public class StreamController {
                 .body(Map.of("status", "NOT_FOUND"));
         }
         return ResponseEntity.ok(Map.of("status", "READY", "title", entry.title()));
+    }
+
+    // ===== Helpers =====
+
+    /**
+     * Unwrap ExecutionException → RuntimeException → original IOException
+     * to get the actual meaningful error message instead of Java wrapper noise.
+     */
+    private String extractRootCause(Exception e) {
+        Throwable cause = e;
+
+        // Unwrap ExecutionException (from CompletableFuture.get())
+        if (cause instanceof ExecutionException && cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        // Unwrap RuntimeException (from our supplyAsync wrapper)
+        if (cause instanceof RuntimeException && cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+
+        String msg = cause.getMessage();
+        if (msg == null || msg.isBlank()) {
+            msg = "Download failed. Please try a different song.";
+        }
+
+        // Clean up common Java exception prefixes that leak into error messages
+        msg = msg.replaceFirst("^java\\.lang\\.RuntimeException:\\s*", "");
+        msg = msg.replaceFirst("^java\\.io\\.IOException:\\s*", "");
+        msg = msg.replaceFirst("^Download failed:\\s*", "");
+
+        return msg;
     }
 
     private String getContentType(Path path) {

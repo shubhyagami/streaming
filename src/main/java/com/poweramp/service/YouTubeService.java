@@ -31,10 +31,19 @@ public class YouTubeService {
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(java.time.Duration.ofSeconds(15))
+        .followRedirects(HttpClient.Redirect.ALWAYS)
         .build();
 
     private static final String INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
     private static final String INNERTUBE_URL = "https://www.youtube.com/youtubei/v1/search?key=" + INNERTUBE_KEY;
+
+    // Multiple Piped API instances for redundancy
+    private static final String[] PIPED_INSTANCES = {
+        "https://pipedapi.kavin.rocks",
+        "https://pipedapi.adminforge.de",
+        "https://pipedapi.in.projectsegfau.lt",
+        "https://api.piped.yt"
+    };
 
     @Value("${poweramp.temp-dir:#{systemProperties['java.io.tmpdir']}/poweramp-stream}")
     private String tempDir;
@@ -52,6 +61,8 @@ public class YouTubeService {
     private int ytdlpTimeout;
 
     public record SearchResult(String videoId, String title, String channel, long duration, String thumbnail) {}
+
+    // ===== Search =====
 
     public List<SearchResult> search(String query, int limit) throws IOException, InterruptedException {
         String bodyJson = "{\"context\":{\"client\":{\"clientName\":\"WEB\",\"clientVersion\":\"2.20240201.08.00\",\"hl\":\"en\",\"gl\":\"US\"}},\"query\":\"" + escapeJson(query) + "\"}";
@@ -202,116 +213,276 @@ public class YouTubeService {
         return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
-    // ===== Download Pipeline =====
-    // Order: yt-dlp (most reliable) → RapidAPI → Innertube Player API (last resort)
+    // ===================================================================
+    // Download Pipeline — tries each method in order until one succeeds:
+    //   1. Piped API    (fast, proxied streams, pure HTTP, no dependencies)
+    //   2. yt-dlp       (reliable subprocess, needs yt-dlp + ffmpeg installed)
+    //   3. RapidAPI     (3rd party, may have quota limits)
+    //   4. Innertube    (last resort, often blocked on datacenter IPs)
+    // ===================================================================
 
     public Path downloadAudio(String videoId) throws IOException, InterruptedException {
-        // 1. Try yt-dlp first (most reliable for bypassing bot detection)
+        List<String> errors = new ArrayList<>();
+
+        // 1. Piped API — lightweight, no dependencies, proxied through their servers
+        try {
+            Path result = downloadWithPipedApi(videoId);
+            if (result != null) {
+                log.info("✓ Downloaded via Piped API: {}", videoId);
+                return result;
+            }
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
+            errors.add("Piped: " + msg);
+            log.warn("Piped API failed for {}: {}", videoId, msg);
+        }
+
+        // 2. yt-dlp — most reliable but needs subprocess
         try {
             Path result = downloadWithYtDlp(videoId);
-            if (result != null) return result;
+            if (result != null) {
+                log.info("✓ Downloaded via yt-dlp: {}", videoId);
+                return result;
+            }
         } catch (Exception e) {
-            log.warn("yt-dlp download failed: {}", e.getMessage());
+            String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
+            errors.add("yt-dlp: " + msg);
+            log.warn("yt-dlp failed for {}: {}", videoId, msg);
         }
 
-        // 2. Try RapidAPI
+        // 3. RapidAPI
         try {
-            return downloadWithRapidApi(videoId);
+            Path result = downloadWithRapidApi(videoId);
+            log.info("✓ Downloaded via RapidAPI: {}", videoId);
+            return result;
         } catch (Exception e) {
-            log.warn("RapidAPI download failed: {}", e.getMessage());
+            String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
+            errors.add("RapidAPI: " + msg);
+            log.warn("RapidAPI failed for {}: {}", videoId, msg);
         }
 
-        // 3. Last resort: Innertube Player API (likely blocked on datacenter IPs)
+        // 4. Innertube Player API — last resort
         try {
-            return downloadWithPlayerApi(videoId);
+            Path result = downloadWithPlayerApi(videoId);
+            log.info("✓ Downloaded via Innertube: {}", videoId);
+            return result;
         } catch (Exception e) {
-            log.warn("Innertube Player API download failed: {}", e.getMessage());
-            throw new IOException("All download methods failed for video " + videoId
-                + ". YouTube may be blocking this server's IP address.", e);
+            String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
+            errors.add("Innertube: " + msg);
+            log.warn("Innertube failed for {}: {}", videoId, msg);
         }
+
+        String allErrors = String.join(" | ", errors);
+        log.error("All download methods failed for {}: {}", videoId, allErrors);
+        throw new IOException("Could not download audio. Tried 4 methods, all failed. Details: " + allErrors);
     }
 
-    // ===== yt-dlp Download =====
+    // ===== Method 1: Piped API =====
+    // Piped is a privacy-friendly YouTube proxy. Its API returns direct audio stream URLs
+    // that are proxied through Piped's servers, bypassing YouTube's IP-based bot detection.
+
+    @SuppressWarnings("unchecked")
+    private Path downloadWithPipedApi(String videoId) throws IOException, InterruptedException {
+        Path dir = Paths.get(tempDir);
+        Files.createDirectories(dir);
+
+        IOException lastError = null;
+
+        for (String instance : PIPED_INSTANCES) {
+            try {
+                String apiUrl = instance + "/streams/" + videoId;
+                log.info("Trying Piped instance: {}", apiUrl);
+
+                HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(apiUrl))
+                    .header("Accept", "application/json")
+                    .header("User-Agent", "Mozilla/5.0")
+                    .timeout(java.time.Duration.ofSeconds(12))
+                    .GET()
+                    .build();
+
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+                if (response.statusCode() != 200) {
+                    log.warn("Piped {} returned status {}", instance, response.statusCode());
+                    continue;
+                }
+
+                Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+
+                // Check for error in response
+                if (json.containsKey("error")) {
+                    log.warn("Piped {} returned error: {}", instance, json.get("error"));
+                    continue;
+                }
+
+                List<Map<String, Object>> audioStreams = (List<Map<String, Object>>) json.get("audioStreams");
+                if (audioStreams == null || audioStreams.isEmpty()) {
+                    log.warn("Piped {} returned no audio streams", instance);
+                    continue;
+                }
+
+                // Find the best audio stream (highest bitrate, prefer m4a/mp3 over webm for compatibility)
+                Map<String, Object> bestStream = null;
+                int bestScore = -1;
+
+                for (Map<String, Object> stream : audioStreams) {
+                    String url = (String) stream.get("url");
+                    if (url == null || url.isBlank()) continue;
+
+                    String mimeType = (String) stream.get("mimeType");
+                    int bitrate = stream.containsKey("bitrate") ? ((Number) stream.get("bitrate")).intValue() : 0;
+
+                    // Score: prefer higher bitrate, slight bonus for mp4/m4a (better browser compatibility)
+                    int score = bitrate;
+                    if (mimeType != null && (mimeType.contains("mp4") || mimeType.contains("m4a"))) {
+                        score += 10000; // prefer mp4a for web playback
+                    }
+
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestStream = stream;
+                    }
+                }
+
+                if (bestStream == null) {
+                    log.warn("Piped {} — no stream with a valid URL", instance);
+                    continue;
+                }
+
+                String streamUrl = (String) bestStream.get("url");
+                String mimeType = (String) bestStream.get("mimeType");
+
+                // Determine file extension
+                String ext = "m4a";
+                if (mimeType != null) {
+                    if (mimeType.contains("webm") || mimeType.contains("opus")) ext = "webm";
+                    else if (mimeType.contains("mpeg")) ext = "mp3";
+                }
+
+                Path outputPath = dir.resolve(videoId + "." + ext);
+                log.info("Downloading from Piped ({}, {}kbps): {}", ext,
+                    bestStream.getOrDefault("bitrate", "?"), instance);
+
+                // Download the audio stream
+                HttpRequest dlRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(streamUrl))
+                    .header("User-Agent", "Mozilla/5.0")
+                    .timeout(java.time.Duration.ofMinutes(3))
+                    .GET()
+                    .build();
+
+                HttpResponse<InputStream> dlResponse = httpClient.send(dlRequest, HttpResponse.BodyHandlers.ofInputStream());
+
+                if (dlResponse.statusCode() != 200 && dlResponse.statusCode() != 206) {
+                    log.warn("Piped stream download returned status {} from {}", dlResponse.statusCode(), instance);
+                    continue;
+                }
+
+                try (InputStream in = dlResponse.body()) {
+                    Files.copy(in, outputPath, StandardCopyOption.REPLACE_EXISTING);
+                }
+
+                long fileSize = Files.size(outputPath);
+                if (fileSize > 10000) { // at least 10KB = valid audio
+                    log.info("Piped download saved: {} ({} bytes)", outputPath.getFileName(), fileSize);
+                    return outputPath;
+                } else {
+                    log.warn("Piped download too small ({} bytes), likely invalid", fileSize);
+                    Files.deleteIfExists(outputPath);
+                }
+
+            } catch (Exception e) {
+                lastError = new IOException("Piped " + instance + ": " + e.getMessage(), e);
+                log.warn("Piped instance {} failed: {}", instance, e.getMessage());
+            }
+        }
+
+        throw lastError != null ? lastError : new IOException("All Piped instances failed");
+    }
+
+    // ===== Method 2: yt-dlp =====
 
     private Path downloadWithYtDlp(String videoId) throws IOException, InterruptedException {
         Path dir = Paths.get(tempDir);
         Files.createDirectories(dir);
 
-        Path outputPath = dir.resolve(videoId + ".%(ext)s");
+        // First check if yt-dlp is available
+        try {
+            Process check = new ProcessBuilder(ytdlpPath, "--version").start();
+            boolean done = check.waitFor(5, TimeUnit.SECONDS);
+            if (!done || check.exitValue() != 0) {
+                throw new IOException("yt-dlp not available on this system");
+            }
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(check.getInputStream()))) {
+                String version = r.readLine();
+                log.info("yt-dlp version: {}", version);
+            }
+        } catch (IOException e) {
+            throw new IOException("yt-dlp is not installed: " + e.getMessage());
+        }
+
         String videoUrl = "https://www.youtube.com/watch?v=" + videoId;
 
-        // Try multiple yt-dlp strategies in order
+        // Try multiple strategies
         String[][] strategies = {
-            // Strategy 1: mweb client (mobile web - least restricted)
+            // Strategy 1: let yt-dlp choose the best approach (latest versions are smart)
             {
-                ytdlpPath,
-                "--no-check-certificates",
-                "--no-warnings",
-                "--prefer-free-formats",
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--audio-quality", "0",
+                ytdlpPath, "-x", "--audio-format", "mp3", "--audio-quality", "5",
+                "--no-check-certificates", "--no-warnings", "--no-playlist",
+                "--no-part", "--no-cache-dir",
+                "--socket-timeout", "30",
+                "-o", dir.resolve(videoId + ".%(ext)s").toString(),
+                videoUrl
+            },
+            // Strategy 2: force mweb client (mobile web, least restricted)
+            {
+                ytdlpPath, "-x", "--audio-format", "mp3", "--audio-quality", "5",
+                "--no-check-certificates", "--no-warnings", "--no-playlist",
+                "--no-part", "--no-cache-dir",
+                "--socket-timeout", "30",
                 "--extractor-args", "youtube:player_client=mweb",
-                "--no-playlist",
-                "--no-part",
-                "-o", dir.resolve(videoId + ".mp3").toString(),
+                "-o", dir.resolve(videoId + ".%(ext)s").toString(),
                 videoUrl
             },
-            // Strategy 2: ios client
+            // Strategy 3: force tv client
             {
-                ytdlpPath,
-                "--no-check-certificates",
-                "--no-warnings",
-                "--prefer-free-formats",
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--audio-quality", "0",
-                "--extractor-args", "youtube:player_client=ios",
-                "--no-playlist",
-                "--no-part",
-                "-o", dir.resolve(videoId + ".mp3").toString(),
-                videoUrl
-            },
-            // Strategy 3: default client with --force-generic-extractor off
-            {
-                ytdlpPath,
-                "--no-check-certificates",
-                "--no-warnings",
-                "--prefer-free-formats",
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--audio-quality", "0",
-                "--no-playlist",
-                "--no-part",
-                "-o", dir.resolve(videoId + ".mp3").toString(),
+                ytdlpPath, "-x", "--audio-format", "mp3", "--audio-quality", "5",
+                "--no-check-certificates", "--no-warnings", "--no-playlist",
+                "--no-part", "--no-cache-dir",
+                "--socket-timeout", "30",
+                "--extractor-args", "youtube:player_client=tv",
+                "-o", dir.resolve(videoId + ".%(ext)s").toString(),
                 videoUrl
             }
         };
 
+        IOException lastError = null;
+
         for (int i = 0; i < strategies.length; i++) {
-            log.info("yt-dlp strategy {} for video {}", i + 1, videoId);
+            log.info("yt-dlp strategy {} of {} for video {}", i + 1, strategies.length, videoId);
             try {
                 Path result = executeYtDlp(strategies[i], videoId, dir);
                 if (result != null) return result;
-            } catch (Exception e) {
+            } catch (IOException e) {
+                lastError = e;
                 log.warn("yt-dlp strategy {} failed: {}", i + 1, e.getMessage());
-                // Clean up any partial files before trying next strategy
                 cleanPartialFiles(dir, videoId);
             }
         }
 
-        throw new IOException("All yt-dlp strategies failed for video " + videoId);
+        throw lastError != null ? lastError : new IOException("All yt-dlp strategies failed");
     }
 
     private Path executeYtDlp(String[] command, String videoId, Path dir) throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.redirectErrorStream(true);
-        pb.environment().put("HOME", dir.toString());
+        pb.environment().put("HOME", "/tmp");
 
-        log.info("Running: {}", String.join(" ", command));
+        log.info("Running yt-dlp: {}", String.join(" ", command));
         Process process = pb.start();
 
-        // Read output in a separate thread to prevent blocking
+        // Read output asynchronously to prevent pipe blocking
         StringBuilder output = new StringBuilder();
         Thread outputReader = new Thread(() -> {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
@@ -324,81 +495,76 @@ public class YouTubeService {
                 log.warn("Error reading yt-dlp output: {}", e.getMessage());
             }
         });
+        outputReader.setDaemon(true);
         outputReader.start();
 
         boolean finished = process.waitFor(ytdlpTimeout, TimeUnit.SECONDS);
-
         if (!finished) {
             process.destroyForcibly();
-            outputReader.join(5000);
-            throw new IOException("yt-dlp timed out after " + ytdlpTimeout + " seconds");
+            outputReader.join(3000);
+            throw new IOException("yt-dlp timed out after " + ytdlpTimeout + "s");
         }
 
         outputReader.join(5000);
         int exitCode = process.exitValue();
 
         if (exitCode != 0) {
-            String errorOutput = output.toString();
-            log.warn("yt-dlp exited with code {}: {}", exitCode, errorOutput);
-            throw new IOException("yt-dlp failed (exit " + exitCode + "): " + truncate(errorOutput, 200));
+            String errorOutput = output.toString().trim();
+            log.warn("yt-dlp exit {}: {}", exitCode, errorOutput);
+            throw new IOException("yt-dlp error: " + truncate(errorOutput, 300));
         }
 
-        // Find the output file (yt-dlp may produce .mp3, .m4a, .opus, .webm)
-        Path mp3 = dir.resolve(videoId + ".mp3");
-        if (Files.exists(mp3) && Files.size(mp3) > 1000) {
-            log.info("yt-dlp saved: {} ({} bytes)", mp3.getFileName(), Files.size(mp3));
-            return mp3;
-        }
+        // Find the output file
+        return findOutputFile(dir, videoId);
+    }
 
-        // Check for other extensions
-        String[] extensions = {".m4a", ".opus", ".webm", ".ogg", ".wav"};
+    private Path findOutputFile(Path dir, String videoId) throws IOException {
+        String[] extensions = {".mp3", ".m4a", ".opus", ".webm", ".ogg", ".wav"};
         for (String ext : extensions) {
-            Path alt = dir.resolve(videoId + ext);
-            if (Files.exists(alt) && Files.size(alt) > 1000) {
-                log.info("yt-dlp saved: {} ({} bytes)", alt.getFileName(), Files.size(alt));
-                return alt;
+            Path p = dir.resolve(videoId + ext);
+            if (Files.exists(p) && Files.size(p) > 10000) {
+                log.info("yt-dlp output: {} ({} bytes)", p.getFileName(), Files.size(p));
+                return p;
             }
         }
-
-        throw new IOException("yt-dlp completed but no output file found");
+        throw new IOException("yt-dlp finished but no valid output file found");
     }
 
     private void cleanPartialFiles(Path dir, String videoId) {
         String[] extensions = {".mp3", ".m4a", ".opus", ".webm", ".ogg", ".wav", ".part", ".ytdl"};
         for (String ext : extensions) {
             try {
-                Path f = dir.resolve(videoId + ext);
-                if (Files.exists(f)) Files.deleteIfExists(f);
+                Files.deleteIfExists(dir.resolve(videoId + ext));
             } catch (IOException ignored) {}
         }
     }
 
     private String truncate(String s, int max) {
         if (s == null) return "";
-        s = s.trim();
         return s.length() > max ? s.substring(0, max) + "..." : s;
     }
 
-    // ===== RapidAPI Download =====
+    // ===== Method 3: RapidAPI =====
 
     private Path downloadWithRapidApi(String videoId) throws IOException, InterruptedException {
         Path dir = Paths.get(tempDir);
         Files.createDirectories(dir);
 
         String apiUrl = "https://" + rapidApiHost + "/dl?id=" + videoId;
-        log.info("Requesting download from RapidAPI: {}", apiUrl);
+        log.info("RapidAPI request: {}", apiUrl);
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
             .header("x-rapidapi-host", rapidApiHost)
             .header("x-rapidapi-key", rapidApiKey)
+            .timeout(java.time.Duration.ofSeconds(30))
             .GET()
             .build();
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
-            throw new IOException("RapidAPI returned status " + response.statusCode() + ": " + response.body());
+            throw new IOException("RapidAPI status " + response.statusCode());
         }
 
         Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
@@ -410,13 +576,11 @@ public class YouTubeService {
 
         String downloadUrl = (String) json.get("link");
         if (downloadUrl == null || downloadUrl.isBlank()) {
-            throw new IOException("No download link in RapidAPI response");
+            throw new IOException("No download link from RapidAPI");
         }
 
-        String title = (String) json.get("title");
-        log.info("Downloading MP3: {} ({} bytes)", title, json.get("filesize"));
-
         Path outputPath = dir.resolve(videoId + ".mp3");
+        log.info("Downloading from RapidAPI: {} ({} bytes)", json.get("title"), json.get("filesize"));
 
         HttpRequest downloadRequest = HttpRequest.newBuilder()
             .uri(URI.create(downloadUrl))
@@ -428,25 +592,30 @@ public class YouTubeService {
             HttpResponse.BodyHandlers.ofInputStream());
 
         if (downloadResponse.statusCode() != 200) {
-            throw new IOException("Download returned status " + downloadResponse.statusCode());
+            throw new IOException("RapidAPI download status " + downloadResponse.statusCode());
         }
 
         try (InputStream in = downloadResponse.body()) {
             Files.copy(in, outputPath, StandardCopyOption.REPLACE_EXISTING);
         }
 
-        log.info("Saved: {} ({} bytes)", outputPath.getFileName(), Files.size(outputPath));
+        long fileSize = Files.size(outputPath);
+        if (fileSize < 10000) {
+            Files.deleteIfExists(outputPath);
+            throw new IOException("RapidAPI download too small (" + fileSize + " bytes)");
+        }
+
+        log.info("RapidAPI saved: {} ({} bytes)", outputPath.getFileName(), fileSize);
         return outputPath;
     }
 
-    // ===== Innertube Player API (last resort) =====
+    // ===== Method 4: Innertube Player API (last resort) =====
 
     @SuppressWarnings("unchecked")
     private Path downloadWithPlayerApi(String videoId) throws IOException, InterruptedException {
         Path dir = Paths.get(tempDir);
         Files.createDirectories(dir);
 
-        // Try multiple Innertube clients in order of permissiveness
         String[][] clients = {
             {"WEB_EMBEDDED_PLAYER", "1.0", ""},
             {"ANDROID_MUSIC", "6.27.51", "30"},
@@ -454,7 +623,7 @@ public class YouTubeService {
             {"WEB", "2.20240201.08.00", ""}
         };
 
-        IOException lastError = new IOException("All clients exhausted");
+        IOException lastError = new IOException("All Innertube clients exhausted");
         for (String[] client : clients) {
             try {
                 Map<String, Object> streamingData = fetchPlayerStreamingData(videoId, client[0], client[1], client[2]);
@@ -463,7 +632,7 @@ public class YouTubeService {
                 if (result != null) return result;
             } catch (IOException e) {
                 lastError = e;
-                log.warn("Player API client {} failed: {}", client[0], e.getMessage());
+                log.warn("Innertube client {} failed: {}", client[0], e.getMessage());
             }
         }
         throw lastError;
@@ -484,9 +653,8 @@ public class YouTubeService {
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://www.youtube.com/youtubei/v1/player?key=" + INNERTUBE_KEY))
             .header("Content-Type", "application/json")
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             .header("Accept", "*/*")
-            .header("Accept-Language", "en-US,en;q=0.9")
             .header("Origin", "https://www.youtube.com")
             .header("Referer", "https://www.youtube.com")
             .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
@@ -495,7 +663,7 @@ public class YouTubeService {
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
-            throw new IOException("Player API returned status " + response.statusCode() + " for client " + clientName);
+            throw new IOException("Innertube status " + response.statusCode() + " for " + clientName);
         }
 
         Map<String, Object> root = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
@@ -504,7 +672,7 @@ public class YouTubeService {
             String pStatus = (String) playability.get("status");
             if (!"OK".equals(pStatus)) {
                 String reason = (String) playability.get("reason");
-                throw new IOException("Video not playable (" + clientName + "): " + (reason != null ? reason : pStatus));
+                throw new IOException(clientName + ": " + (reason != null ? reason : pStatus));
             }
         }
 
@@ -527,52 +695,26 @@ public class YouTubeService {
             if (mime != null && mime.startsWith("audio") && url != null && !url.isBlank()) {
                 if (bestFormat == null) bestFormat = fmt;
                 else {
-                    String bestMime = (String) bestFormat.get("mimeType");
                     int bestBitrate = bestFormat.containsKey("bitrate") ? ((Number) bestFormat.get("bitrate")).intValue() : 0;
                     int fmtBitrate = fmt.containsKey("bitrate") ? ((Number) fmt.get("bitrate")).intValue() : 0;
-                    boolean bestIsOpus = bestMime != null && bestMime.contains("opus");
-                    boolean fmtIsOpus = mime.contains("opus");
-                    if (fmtIsOpus && !bestIsOpus) {
-                        bestFormat = fmt;
-                    } else if (fmtIsOpus == bestIsOpus && fmtBitrate > bestBitrate) {
-                        bestFormat = fmt;
-                    }
+                    if (fmtBitrate > bestBitrate) bestFormat = fmt;
                 }
             }
         }
 
-        // Second pass: regular formats with direct URLs
+        // Second pass: regular formats
         if (bestFormat == null) {
             for (Map<String, Object> fmt : regular) {
-                String mime = (String) fmt.get("mimeType");
                 String url = (String) fmt.get("url");
-                if (mime != null && mime.startsWith("audio") && url != null && !url.isBlank()) {
+                if (url != null && !url.isBlank()) {
                     bestFormat = fmt;
                     break;
                 }
             }
         }
 
-        // Third pass: signature-ciphered formats
         if (bestFormat == null) {
-            for (Map<String, Object> fmt : adaptive) {
-                String cipher = (String) fmt.get("signatureCipher");
-                if (cipher != null) {
-                    String decodedUrl = decipherUrl(cipher);
-                    if (decodedUrl != null) {
-                        String mime = (String) fmt.get("mimeType");
-                        if (mime != null && mime.startsWith("audio")) {
-                            bestFormat = fmt;
-                            bestFormat.put("url", decodedUrl);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (bestFormat == null) {
-            throw new IOException("No usable audio format found");
+            throw new IOException("No usable audio format in streaming data");
         }
 
         String audioUrl = (String) bestFormat.get("url");
@@ -589,13 +731,12 @@ public class YouTubeService {
         }
 
         Path outputPath = dir.resolve(videoId + "." + ext);
-        log.info("Downloading audio ({}) from format: {}", ext, bestFormat.getOrDefault("itag", "?"));
 
         HttpRequest dlRequest = HttpRequest.newBuilder()
             .uri(URI.create(audioUrl))
             .timeout(java.time.Duration.ofMinutes(3))
-            .GET()
             .header("User-Agent", "Mozilla/5.0")
+            .GET()
             .build();
 
         HttpResponse<InputStream> dlResponse;
@@ -607,40 +748,14 @@ public class YouTubeService {
         }
 
         if (dlResponse.statusCode() != 200 && dlResponse.statusCode() != 206) {
-            throw new IOException("Audio download returned status " + dlResponse.statusCode());
+            throw new IOException("Innertube audio download status " + dlResponse.statusCode());
         }
 
         try (InputStream in = dlResponse.body()) {
             Files.copy(in, outputPath, StandardCopyOption.REPLACE_EXISTING);
         }
 
-        log.info("Saved: {} ({} bytes)", outputPath.getFileName(), Files.size(outputPath));
+        log.info("Innertube saved: {} ({} bytes)", outputPath.getFileName(), Files.size(outputPath));
         return outputPath;
     }
-
-    private String decipherUrl(String cipher) {
-        try {
-            String[] params = cipher.split("&");
-            String urlParam = null;
-            String spParam = null;
-            String sigParam = null;
-            for (String p : params) {
-                if (p.startsWith("url=")) urlParam = p.substring(4);
-                else if (p.startsWith("sp=")) spParam = p.substring(3);
-                else if (p.startsWith("s=")) sigParam = p.substring(2);
-            }
-            if (urlParam != null) {
-                String decodedUrl = java.net.URLDecoder.decode(urlParam, "UTF-8");
-                if (sigParam != null) {
-                    String sp = java.net.URLDecoder.decode(spParam != null ? spParam : "sig", "UTF-8");
-                    decodedUrl += "&" + sp + "=" + java.net.URLDecoder.decode(sigParam, "UTF-8");
-                }
-                return decodedUrl;
-            }
-        } catch (Exception e) {
-            log.warn("Failed to decipher URL: {}", e.getMessage());
-        }
-        return null;
-    }
-
 }
