@@ -406,7 +406,7 @@ public class YouTubeService {
         for (String p : paths) {
             try {
                 Process check = new ProcessBuilder(p, "--version").start();
-                if (check.waitFor(5, TimeUnit.SECONDS) && check.exitValue() == 0) {
+                if (check.waitFor(30, TimeUnit.SECONDS) && check.exitValue() == 0) {
                     try (BufferedReader r = new BufferedReader(new InputStreamReader(check.getInputStream()))) {
                         String version = r.readLine();
                         log.info("Found yt-dlp at {} (version {})", p, version);
