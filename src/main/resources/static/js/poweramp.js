@@ -673,6 +673,7 @@ function restorePlayerState() {
             sessionStorage.removeItem(PLAYER_STORAGE_KEY);
             np.classList.add('hidden');
             setStatus('Session expired — search again');
+            if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
             currentToken = null; currentVideoId = null;
         };
             audio.onplay = function() {
@@ -762,27 +763,62 @@ function renderSpotifyResults(results) {
     });
 }
 
+let pollingInterval = null;
+
+function startPolling(token, title, thumbnail) {
+    const spinner = document.getElementById('loading-spinner');
+    
+    if (pollingInterval) clearInterval(pollingInterval);
+    
+    pollingInterval = setInterval(() => {
+        fetch('/api/yt/stream/' + token + '/status')
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'READY') {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                    spinner.classList.add('hidden');
+                    currentToken = token;
+                    const audio = document.getElementById('audio-player');
+                    audio.src = data.streamUrl;
+                    audio.play().then(() => {
+                        initWebAudio();
+                        initToneWeb();
+                        reconnectWebAudio();
+                        initSpectrumAnalyzer();
+                    }).catch(function(){});
+                    showNowPlaying(title, thumbnail);
+                    setStatus('Playing: ' + title);
+                    savePlayerState();
+                } else if (data.status === 'ERROR' || data.status === 'NOT_FOUND') {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                    spinner.classList.add('hidden');
+                    document.getElementById('search-status').innerHTML = '<span class="status-msg error">' + (data.error || 'Download failed') + '</span>';
+                    setStatus('Download failed');
+                } else {
+                    // DOWNLOADING: keep polling
+                    setStatus('Downloading... (this may take up to 2 minutes)');
+                }
+            })
+            .catch(err => {
+                // Ignore transient network errors during polling
+            });
+    }, 2000);
+}
+
 function playVideo(videoId, title, thumbnail) {
     currentThumbnail = thumbnail || null;
     const spinner = document.getElementById('loading-spinner');
     spinner.classList.remove('hidden');
     currentVideoId = videoId;
+    setStatus('Starting download...');
     fetch('/api/yt/stream?videoId=' + encodeURIComponent(videoId) + '&title=' + encodeURIComponent(title), { method: 'POST' })
-        .then(async r => { if (!r.ok) { const errBody = await r.json().catch(() => ({})); throw new Error(errBody.error || 'Download failed'); } return r.json(); })
+        .then(async r => { if (!r.ok && r.status !== 202) { const errBody = await r.json().catch(() => ({})); throw new Error(errBody.error || 'Download failed'); } return r.json(); })
         .then(data => {
-            spinner.classList.add('hidden');
-            currentToken = data.token;
-            const audio = document.getElementById('audio-player');
-            audio.src = data.streamUrl;
-            audio.play().then(() => {
-                initWebAudio();
-                initToneWeb();
-                reconnectWebAudio();
-                initSpectrumAnalyzer();
-            }).catch(function(){});
-            showNowPlaying(title, currentThumbnail);
-            setStatus('Playing: ' + title);
-            savePlayerState();
+            if (data.status === 'DOWNLOADING' || data.status === 'READY') {
+                startPolling(data.token, title, currentThumbnail);
+            }
         })
         .catch(err => { spinner.classList.add('hidden'); document.getElementById('search-status').innerHTML = '<span class="status-msg error">' + err.message + '</span>'; });
 }
@@ -791,25 +827,16 @@ function playSpotify(audioUrl, videoId, title) {
     const spinner = document.getElementById('loading-spinner');
     spinner.classList.remove('hidden');
     currentVideoId = videoId || 'spotify';
+    setStatus('Starting download...');
     const params = 'title=' + encodeURIComponent(title)
         + (audioUrl ? '&audioUrl=' + encodeURIComponent(audioUrl) : '')
         + (videoId ? '&videoId=' + encodeURIComponent(videoId) : '');
     fetch('/api/spotify/stream?' + params, { method: 'POST' })
-        .then(async r => { if (!r.ok) { const errBody = await r.json().catch(() => ({})); throw new Error(errBody.error || 'Download failed'); } return r.json(); })
+        .then(async r => { if (!r.ok && r.status !== 202) { const errBody = await r.json().catch(() => ({})); throw new Error(errBody.error || 'Download failed'); } return r.json(); })
         .then(data => {
-            spinner.classList.add('hidden');
-            currentToken = data.token;
-            const audio = document.getElementById('audio-player');
-            audio.src = data.streamUrl;
-            audio.play().then(() => {
-                initWebAudio();
-                initToneWeb();
-                reconnectWebAudio();
-                initSpectrumAnalyzer();
-            }).catch(function(){});
-            showNowPlaying(title, currentThumbnail);
-            setStatus('Playing: ' + title);
-            savePlayerState();
+            if (data.status === 'DOWNLOADING' || data.status === 'READY') {
+                startPolling(data.token, title, currentThumbnail);
+            }
         })
         .catch(err => { spinner.classList.add('hidden'); document.getElementById('search-status').innerHTML = '<span class="status-msg error">' + err.message + '</span>'; });
 }
@@ -1002,6 +1029,7 @@ function stopPlayback() {
     if (currentToken) { fetch('/api/yt/stop/' + currentToken, { method: 'POST' }).catch(function(){}); currentToken = null; }
     currentVideoId = null;
     currentThumbnail = null;
+    if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
     clearPlayerState();
     setStatus('Ready');
     if (sourceNode) { try { sourceNode.disconnect(); } catch(e) {} sourceNode = null; }

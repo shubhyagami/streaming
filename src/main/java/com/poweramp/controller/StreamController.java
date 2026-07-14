@@ -17,9 +17,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
 
 @RestController
 public class StreamController {
@@ -29,7 +27,6 @@ public class StreamController {
     private final YouTubeService ytService;
     private final SpotifyService spotifyService;
     private final TempFileManager tempFileManager;
-    private final Map<String, CompletableFuture<Path>> downloads = new ConcurrentHashMap<>();
 
     public StreamController(YouTubeService ytService, SpotifyService spotifyService, TempFileManager tempFileManager) {
         this.ytService = ytService;
@@ -49,41 +46,31 @@ public class StreamController {
             @RequestParam String videoId,
             @RequestParam(defaultValue = "Unknown") String title) {
 
-        CompletableFuture<Path> future = CompletableFuture.supplyAsync(() -> {
+        // 1. Immediately register a download session
+        String token = tempFileManager.register(title);
+
+        // 2. Start download in the background
+        CompletableFuture.supplyAsync(() -> {
             try {
                 return ytService.downloadAudio(videoId);
             } catch (Exception e) {
                 throw new RuntimeException(e.getMessage(), e);
             }
+        }).whenComplete((path, ex) -> {
+            if (ex != null) {
+                String msg = extractRootCause(ex);
+                log.error("Download failed for videoId={}: {}", videoId, msg);
+                tempFileManager.markError(token, msg);
+            } else {
+                tempFileManager.markReady(token, path);
+            }
         });
 
-        downloads.put(videoId, future);
-
-        try {
-            Path path = future.get(180, java.util.concurrent.TimeUnit.SECONDS);
-            String token = tempFileManager.register(path, title);
-            String contentType = getContentType(path);
-            downloads.remove(videoId);
-
-            return ResponseEntity.ok(Map.of(
-                "token", token,
-                "streamUrl", "/api/yt/stream/" + token,
-                "title", title,
-                "contentType", contentType
-            ));
-        } catch (TimeoutException e) {
-            downloads.remove(videoId);
-            future.cancel(true);
-            log.error("Download timed out for videoId={}", videoId);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", "Download timed out after 3 minutes. Please try again."));
-        } catch (Exception e) {
-            downloads.remove(videoId);
-            String msg = extractRootCause(e);
-            log.error("Download failed for videoId={}: {}", videoId, msg);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", msg));
-        }
+        // 3. Return 202 Accepted immediately so the router doesn't timeout
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
+            "token", token,
+            "status", "DOWNLOADING"
+        ));
     }
 
     // ===== Spotify =====
@@ -102,7 +89,11 @@ public class StreamController {
         boolean useRapidApi = audioUrl != null && !audioUrl.isBlank();
         String id = useRapidApi ? java.util.UUID.randomUUID().toString().substring(0, 8) : videoId;
 
-        CompletableFuture<Path> future = CompletableFuture.supplyAsync(() -> {
+        // 1. Immediately register a download session
+        String token = tempFileManager.register(title);
+
+        // 2. Start download in the background
+        CompletableFuture.supplyAsync(() -> {
             try {
                 return useRapidApi
                     ? spotifyService.downloadAudio(audioUrl, id)
@@ -110,36 +101,21 @@ public class StreamController {
             } catch (Exception e) {
                 throw new RuntimeException(e.getMessage(), e);
             }
+        }).whenComplete((path, ex) -> {
+            if (ex != null) {
+                String msg = extractRootCause(ex);
+                log.error("Spotify download failed for id={}: {}", id, msg);
+                tempFileManager.markError(token, msg);
+            } else {
+                tempFileManager.markReady(token, path);
+            }
         });
 
-        String key = useRapidApi ? id : videoId;
-        downloads.put(key, future);
-
-        try {
-            Path path = future.get(180, java.util.concurrent.TimeUnit.SECONDS);
-            String token = tempFileManager.register(path, title);
-            String contentType = getContentType(path);
-            downloads.remove(key);
-
-            return ResponseEntity.ok(Map.of(
-                "token", token,
-                "streamUrl", "/api/yt/stream/" + token,
-                "title", title,
-                "contentType", contentType
-            ));
-        } catch (TimeoutException e) {
-            downloads.remove(key);
-            future.cancel(true);
-            log.error("Spotify download timed out for key={}", key);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", "Download timed out after 3 minutes. Please try again."));
-        } catch (Exception e) {
-            downloads.remove(key);
-            String msg = extractRootCause(e);
-            log.error("Spotify download failed for key={}: {}", key, msg);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", msg));
-        }
+        // 3. Return 202 Accepted immediately
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
+            "token", token,
+            "status", "DOWNLOADING"
+        ));
     }
 
     // ===== Shared streaming (works for both YouTube and Spotify tokens) =====
@@ -147,7 +123,7 @@ public class StreamController {
     @GetMapping("/api/yt/stream/{token}")
     public ResponseEntity<Resource> streamFile(@PathVariable String token) {
         TempFileManager.TempEntry entry = tempFileManager.get(token);
-        if (entry == null) {
+        if (entry == null || entry.path() == null) {
             return ResponseEntity.notFound().build();
         }
 
@@ -173,13 +149,32 @@ public class StreamController {
     }
 
     @GetMapping("/api/yt/stream/{token}/status")
-    public ResponseEntity<Map<String, String>> getStatus(@PathVariable String token) {
+    public ResponseEntity<Map<String, Object>> getStatus(@PathVariable String token) {
         TempFileManager.TempEntry entry = tempFileManager.get(token);
+        
         if (entry == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Map.of("status", "NOT_FOUND"));
         }
-        return ResponseEntity.ok(Map.of("status", "READY", "title", entry.title()));
+        
+        if (entry.status() == TempFileManager.Status.DOWNLOADING) {
+            return ResponseEntity.ok(Map.of(
+                "status", "DOWNLOADING", 
+                "title", entry.title()
+            ));
+        } else if (entry.status() == TempFileManager.Status.ERROR) {
+            return ResponseEntity.ok(Map.of(
+                "status", "ERROR", 
+                "error", entry.errorMessage() != null ? entry.errorMessage() : "Unknown error",
+                "title", entry.title()
+            ));
+        } else {
+            return ResponseEntity.ok(Map.of(
+                "status", "READY", 
+                "title", entry.title(),
+                "streamUrl", "/api/yt/stream/" + token
+            ));
+        }
     }
 
     // ===== Helpers =====
@@ -188,7 +183,7 @@ public class StreamController {
      * Unwrap ExecutionException → RuntimeException → original IOException
      * to get the actual meaningful error message instead of Java wrapper noise.
      */
-    private String extractRootCause(Exception e) {
+    private String extractRootCause(Throwable e) {
         Throwable cause = e;
 
         // Unwrap ExecutionException (from CompletableFuture.get())
@@ -197,6 +192,10 @@ public class StreamController {
         }
         // Unwrap RuntimeException (from our supplyAsync wrapper)
         if (cause instanceof RuntimeException && cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        // Unwrap CompletionException (from CompletableFuture)
+        if (cause instanceof java.util.concurrent.CompletionException && cause.getCause() != null) {
             cause = cause.getCause();
         }
 
