@@ -54,7 +54,7 @@ public class StreamController {
         downloads.put(videoId, future);
 
         try {
-            Path path = future.get(120, java.util.concurrent.TimeUnit.SECONDS);
+            Path path = future.get(180, java.util.concurrent.TimeUnit.SECONDS);
             String token = tempFileManager.register(path, title);
             String contentType = getContentType(path);
             downloads.remove(videoId);
@@ -65,10 +65,19 @@ public class StreamController {
                 "title", title,
                 "contentType", contentType
             ));
+        } catch (java.util.concurrent.TimeoutException e) {
+            downloads.remove(videoId);
+            future.cancel(true);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Download timed out. The server may be under heavy load."));
         } catch (Exception e) {
             downloads.remove(videoId);
+            String msg = e.getMessage();
+            if (msg != null && msg.contains("bot")) {
+                msg = "YouTube is blocking this request. Please try again later.";
+            }
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", e.getMessage()));
+                .body(Map.of("error", msg != null ? msg : "Unknown download error"));
         }
     }
 
@@ -102,7 +111,7 @@ public class StreamController {
         downloads.put(key, future);
 
         try {
-            Path path = future.get(120, java.util.concurrent.TimeUnit.SECONDS);
+            Path path = future.get(180, java.util.concurrent.TimeUnit.SECONDS);
             String token = tempFileManager.register(path, title);
             String contentType = getContentType(path);
             downloads.remove(key);
@@ -113,10 +122,19 @@ public class StreamController {
                 "title", title,
                 "contentType", contentType
             ));
+        } catch (java.util.concurrent.TimeoutException e) {
+            downloads.remove(key);
+            future.cancel(true);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Download timed out. The server may be under heavy load."));
         } catch (Exception e) {
             downloads.remove(key);
+            String msg = e.getMessage();
+            if (msg != null && msg.contains("bot")) {
+                msg = "YouTube is blocking this request. Please try again later.";
+            }
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", e.getMessage()));
+                .body(Map.of("error", msg != null ? msg : "Unknown download error"));
         }
     }
 

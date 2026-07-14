@@ -40,6 +40,9 @@ poweramp:
     host: youtube-mp36.p.rapidapi.com
     spotify-host: spotify81.p.rapidapi.com
     key: e9f2c625ebmsh6cd2de7109f2f5ep1f9991jsn4f3b636412b2
+  ytdlp:
+    path: yt-dlp
+    timeout: 120
   defaults:
     sample-rate: 44100
     bit-depth: 16

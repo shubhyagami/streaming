@@ -7,8 +7,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -20,6 +22,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class YouTubeService {
@@ -42,6 +45,12 @@ public class YouTubeService {
     @Value("${poweramp.rapidapi.key:e9f2c625ebmsh6cd2de7109f2f5ep1f9991jsn4f3b636412b2}")
     private String rapidApiKey;
 
+    @Value("${poweramp.ytdlp.path:yt-dlp}")
+    private String ytdlpPath;
+
+    @Value("${poweramp.ytdlp.timeout:120}")
+    private int ytdlpTimeout;
+
     public record SearchResult(String videoId, String title, String channel, long duration, String thumbnail) {}
 
     public List<SearchResult> search(String query, int limit) throws IOException, InterruptedException {
@@ -55,10 +64,6 @@ public class YouTubeService {
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Origin", "https://www.youtube.com")
             .header("Referer", "https://www.youtube.com")
-            .header("Cookie", "CONSENT=YES+cb; SOCS=CAISHAhCEhcKAzEwOBIENTcyNBghMACoBQ")
-            .header("sec-ch-ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"")
-            .header("sec-ch-ua-mobile", "?0")
-            .header("sec-ch-ua-platform", "\"Windows\"")
             .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
             .build();
 
@@ -197,15 +202,184 @@ public class YouTubeService {
         return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
+    // ===== Download Pipeline =====
+    // Order: yt-dlp (most reliable) → RapidAPI → Innertube Player API (last resort)
+
     public Path downloadAudio(String videoId) throws IOException, InterruptedException {
-        // Try RapidAPI first
+        // 1. Try yt-dlp first (most reliable for bypassing bot detection)
+        try {
+            Path result = downloadWithYtDlp(videoId);
+            if (result != null) return result;
+        } catch (Exception e) {
+            log.warn("yt-dlp download failed: {}", e.getMessage());
+        }
+
+        // 2. Try RapidAPI
         try {
             return downloadWithRapidApi(videoId);
         } catch (Exception e) {
-            log.warn("RapidAPI download failed, falling back to Innertube player API: {}", e.getMessage());
+            log.warn("RapidAPI download failed: {}", e.getMessage());
+        }
+
+        // 3. Last resort: Innertube Player API (likely blocked on datacenter IPs)
+        try {
             return downloadWithPlayerApi(videoId);
+        } catch (Exception e) {
+            log.warn("Innertube Player API download failed: {}", e.getMessage());
+            throw new IOException("All download methods failed for video " + videoId
+                + ". YouTube may be blocking this server's IP address.", e);
         }
     }
+
+    // ===== yt-dlp Download =====
+
+    private Path downloadWithYtDlp(String videoId) throws IOException, InterruptedException {
+        Path dir = Paths.get(tempDir);
+        Files.createDirectories(dir);
+
+        Path outputPath = dir.resolve(videoId + ".%(ext)s");
+        String videoUrl = "https://www.youtube.com/watch?v=" + videoId;
+
+        // Try multiple yt-dlp strategies in order
+        String[][] strategies = {
+            // Strategy 1: mweb client (mobile web - least restricted)
+            {
+                ytdlpPath,
+                "--no-check-certificates",
+                "--no-warnings",
+                "--prefer-free-formats",
+                "--extract-audio",
+                "--audio-format", "mp3",
+                "--audio-quality", "0",
+                "--extractor-args", "youtube:player_client=mweb",
+                "--no-playlist",
+                "--no-part",
+                "-o", dir.resolve(videoId + ".mp3").toString(),
+                videoUrl
+            },
+            // Strategy 2: ios client
+            {
+                ytdlpPath,
+                "--no-check-certificates",
+                "--no-warnings",
+                "--prefer-free-formats",
+                "--extract-audio",
+                "--audio-format", "mp3",
+                "--audio-quality", "0",
+                "--extractor-args", "youtube:player_client=ios",
+                "--no-playlist",
+                "--no-part",
+                "-o", dir.resolve(videoId + ".mp3").toString(),
+                videoUrl
+            },
+            // Strategy 3: default client with --force-generic-extractor off
+            {
+                ytdlpPath,
+                "--no-check-certificates",
+                "--no-warnings",
+                "--prefer-free-formats",
+                "--extract-audio",
+                "--audio-format", "mp3",
+                "--audio-quality", "0",
+                "--no-playlist",
+                "--no-part",
+                "-o", dir.resolve(videoId + ".mp3").toString(),
+                videoUrl
+            }
+        };
+
+        for (int i = 0; i < strategies.length; i++) {
+            log.info("yt-dlp strategy {} for video {}", i + 1, videoId);
+            try {
+                Path result = executeYtDlp(strategies[i], videoId, dir);
+                if (result != null) return result;
+            } catch (Exception e) {
+                log.warn("yt-dlp strategy {} failed: {}", i + 1, e.getMessage());
+                // Clean up any partial files before trying next strategy
+                cleanPartialFiles(dir, videoId);
+            }
+        }
+
+        throw new IOException("All yt-dlp strategies failed for video " + videoId);
+    }
+
+    private Path executeYtDlp(String[] command, String videoId, Path dir) throws IOException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.redirectErrorStream(true);
+        pb.environment().put("HOME", dir.toString());
+
+        log.info("Running: {}", String.join(" ", command));
+        Process process = pb.start();
+
+        // Read output in a separate thread to prevent blocking
+        StringBuilder output = new StringBuilder();
+        Thread outputReader = new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                    log.debug("yt-dlp: {}", line);
+                }
+            } catch (IOException e) {
+                log.warn("Error reading yt-dlp output: {}", e.getMessage());
+            }
+        });
+        outputReader.start();
+
+        boolean finished = process.waitFor(ytdlpTimeout, TimeUnit.SECONDS);
+
+        if (!finished) {
+            process.destroyForcibly();
+            outputReader.join(5000);
+            throw new IOException("yt-dlp timed out after " + ytdlpTimeout + " seconds");
+        }
+
+        outputReader.join(5000);
+        int exitCode = process.exitValue();
+
+        if (exitCode != 0) {
+            String errorOutput = output.toString();
+            log.warn("yt-dlp exited with code {}: {}", exitCode, errorOutput);
+            throw new IOException("yt-dlp failed (exit " + exitCode + "): " + truncate(errorOutput, 200));
+        }
+
+        // Find the output file (yt-dlp may produce .mp3, .m4a, .opus, .webm)
+        Path mp3 = dir.resolve(videoId + ".mp3");
+        if (Files.exists(mp3) && Files.size(mp3) > 1000) {
+            log.info("yt-dlp saved: {} ({} bytes)", mp3.getFileName(), Files.size(mp3));
+            return mp3;
+        }
+
+        // Check for other extensions
+        String[] extensions = {".m4a", ".opus", ".webm", ".ogg", ".wav"};
+        for (String ext : extensions) {
+            Path alt = dir.resolve(videoId + ext);
+            if (Files.exists(alt) && Files.size(alt) > 1000) {
+                log.info("yt-dlp saved: {} ({} bytes)", alt.getFileName(), Files.size(alt));
+                return alt;
+            }
+        }
+
+        throw new IOException("yt-dlp completed but no output file found");
+    }
+
+    private void cleanPartialFiles(Path dir, String videoId) {
+        String[] extensions = {".mp3", ".m4a", ".opus", ".webm", ".ogg", ".wav", ".part", ".ytdl"};
+        for (String ext : extensions) {
+            try {
+                Path f = dir.resolve(videoId + ext);
+                if (Files.exists(f)) Files.deleteIfExists(f);
+            } catch (IOException ignored) {}
+        }
+    }
+
+    private String truncate(String s, int max) {
+        if (s == null) return "";
+        s = s.trim();
+        return s.length() > max ? s.substring(0, max) + "..." : s;
+    }
+
+    // ===== RapidAPI Download =====
 
     private Path downloadWithRapidApi(String videoId) throws IOException, InterruptedException {
         Path dir = Paths.get(tempDir);
@@ -265,6 +439,8 @@ public class YouTubeService {
         return outputPath;
     }
 
+    // ===== Innertube Player API (last resort) =====
+
     @SuppressWarnings("unchecked")
     private Path downloadWithPlayerApi(String videoId) throws IOException, InterruptedException {
         Path dir = Paths.get(tempDir);
@@ -313,13 +489,6 @@ public class YouTubeService {
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Origin", "https://www.youtube.com")
             .header("Referer", "https://www.youtube.com")
-            .header("Cookie", "CONSENT=YES+cb; SOCS=CAISHAhCEhcKAzEwOBIENTcyNBghMACoBQ; __Secure-ENID=17.SE=; YSC=DwKYllHNwC4; VISITOR_INFO1_LIVE=ST1TiqP3p9k")
-            .header("sec-ch-ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"")
-            .header("sec-ch-ua-mobile", "?0")
-            .header("sec-ch-ua-platform", "\"Windows\"")
-            .header("Sec-Fetch-Dest", "empty")
-            .header("Sec-Fetch-Mode", "same-origin")
-            .header("Sec-Fetch-Site", "same-origin")
             .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
             .build();
 
