@@ -768,7 +768,7 @@ function playVideo(videoId, title, thumbnail) {
     spinner.classList.remove('hidden');
     currentVideoId = videoId;
     fetch('/api/yt/stream?videoId=' + encodeURIComponent(videoId) + '&title=' + encodeURIComponent(title), { method: 'POST' })
-        .then(r => { if (!r.ok) throw new Error('Download failed'); return r.json(); })
+        .then(async r => { if (!r.ok) { const errBody = await r.json().catch(() => ({})); throw new Error(errBody.error || 'Download failed'); } return r.json(); })
         .then(data => {
             spinner.classList.add('hidden');
             currentToken = data.token;
@@ -795,7 +795,7 @@ function playSpotify(audioUrl, videoId, title) {
         + (audioUrl ? '&audioUrl=' + encodeURIComponent(audioUrl) : '')
         + (videoId ? '&videoId=' + encodeURIComponent(videoId) : '');
     fetch('/api/spotify/stream?' + params, { method: 'POST' })
-        .then(r => { if (!r.ok) throw new Error('Download failed'); return r.json(); })
+        .then(async r => { if (!r.ok) { const errBody = await r.json().catch(() => ({})); throw new Error(errBody.error || 'Download failed'); } return r.json(); })
         .then(data => {
             spinner.classList.add('hidden');
             currentToken = data.token;

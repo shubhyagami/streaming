@@ -189,6 +189,16 @@ public class YouTubeService {
     }
 
     public Path downloadAudio(String videoId) throws IOException, InterruptedException {
+        // Try RapidAPI first
+        try {
+            return downloadWithRapidApi(videoId);
+        } catch (Exception e) {
+            log.warn("RapidAPI download failed, falling back to Innertube player API: {}", e.getMessage());
+            return downloadWithPlayerApi(videoId);
+        }
+    }
+
+    private Path downloadWithRapidApi(String videoId) throws IOException, InterruptedException {
         Path dir = Paths.get(tempDir);
         Files.createDirectories(dir);
 
@@ -239,6 +249,149 @@ public class YouTubeService {
         }
 
         try (InputStream in = downloadResponse.body()) {
+            Files.copy(in, outputPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        log.info("Saved: {} ({} bytes)", outputPath.getFileName(), Files.size(outputPath));
+        return outputPath;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Path downloadWithPlayerApi(String videoId) throws IOException, InterruptedException {
+        Path dir = Paths.get(tempDir);
+        Files.createDirectories(dir);
+
+        String bodyJson = "{\"context\":{\"client\":{\"clientName\":\"WEB\",\"clientVersion\":\"2.20240201.08.00\",\"hl\":\"en\",\"gl\":\"US\"}},\"videoId\":\"" + escapeJson(videoId) + "\"}";
+
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create("https://www.youtube.com/youtubei/v1/player?key=" + INNERTUBE_KEY))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
+            .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) {
+            throw new IOException("Player API returned status " + response.statusCode());
+        }
+
+        Map<String, Object> root = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+        Map<String, Object> playability = (Map<String, Object>) root.get("playabilityStatus");
+        if (playability != null) {
+            String pStatus = (String) playability.get("status");
+            if (!"OK".equals(pStatus)) {
+                String reason = (String) playability.get("reason");
+                throw new IOException("Video not playable: " + (reason != null ? reason : pStatus));
+            }
+        }
+
+        Map<String, Object> streamingData = (Map<String, Object>) root.get("streamingData");
+        if (streamingData == null) {
+            throw new IOException("No streaming data available for this video");
+        }
+
+        // Collect audio-only formats from adaptiveFormats
+        List<Map<String, Object>> adaptive = (List<Map<String, Object>>) streamingData.get("adaptiveFormats");
+        if (adaptive == null) adaptive = new ArrayList<>();
+        List<Map<String, Object>> regular = (List<Map<String, Object>>) streamingData.get("formats");
+        if (regular == null) regular = new ArrayList<>();
+
+        Map<String, Object> bestFormat = null;
+        for (Map<String, Object> fmt : adaptive) {
+            String mime = (String) fmt.get("mimeType");
+            String url = (String) fmt.get("url");
+            if (mime != null && mime.startsWith("audio") && url != null && !url.isBlank()) {
+                if (bestFormat == null) bestFormat = fmt;
+                else {
+                    String bestMime = (String) bestFormat.get("mimeType");
+                    int bestBitrate = bestFormat.containsKey("bitrate") ? ((Number) bestFormat.get("bitrate")).intValue() : 0;
+                    int fmtBitrate = fmt.containsKey("bitrate") ? ((Number) fmt.get("bitrate")).intValue() : 0;
+                    boolean bestIsOpus = bestMime != null && bestMime.contains("opus");
+                    boolean fmtIsOpus = mime.contains("opus");
+                    if (fmtIsOpus && !bestIsOpus) {
+                        bestFormat = fmt;
+                    } else if (fmtIsOpus == bestIsOpus && fmtBitrate > bestBitrate) {
+                        bestFormat = fmt;
+                    }
+                }
+            }
+        }
+
+        if (bestFormat == null) {
+            // Try regular formats
+            for (Map<String, Object> fmt : regular) {
+                String mime = (String) fmt.get("mimeType");
+                String url = (String) fmt.get("url");
+                if (mime != null && mime.startsWith("audio") && url != null && !url.isBlank()) {
+                    bestFormat = fmt;
+                    break;
+                }
+            }
+        }
+
+        if (bestFormat == null) {
+            // Check for signature ciphered URLs
+            for (Map<String, Object> fmt : adaptive) {
+                String cipher = (String) fmt.get("signatureCipher");
+                if (cipher != null) {
+                    String[] params = cipher.split("&");
+                    String urlParam = null;
+                    String spParam = null;
+                    String sigParam = null;
+                    for (String p : params) {
+                        if (p.startsWith("url=")) urlParam = p.substring(4);
+                        else if (p.startsWith("sp=")) spParam = p.substring(3);
+                        else if (p.startsWith("s=")) sigParam = p.substring(2);
+                    }
+                    if (urlParam != null) {
+                        String decodedUrl = java.net.URLDecoder.decode(urlParam, "UTF-8");
+                        if (sigParam != null) {
+                            decodedUrl += "&" + (spParam != null ? java.net.URLDecoder.decode(spParam, "UTF-8") : "sig") + "=" + java.net.URLDecoder.decode(sigParam, "UTF-8");
+                        }
+                        String mime = (String) fmt.get("mimeType");
+                        if (mime != null && mime.startsWith("audio")) {
+                            bestFormat = fmt;
+                            bestFormat.put("url", decodedUrl);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (bestFormat == null) {
+            throw new IOException("No usable audio format found. Try another video.");
+        }
+
+        String audioUrl = (String) bestFormat.get("url");
+        if (audioUrl == null || audioUrl.isBlank()) {
+            throw new IOException("Audio URL is empty");
+        }
+
+        String mimeType = (String) bestFormat.get("mimeType");
+        String ext = "m4a";
+        if (mimeType != null) {
+            if (mimeType.contains("opus")) ext = "opus";
+            else if (mimeType.contains("webm")) ext = "webm";
+            else if (mimeType.contains("mp4")) ext = "m4a";
+        }
+
+        Path outputPath = dir.resolve(videoId + "." + ext);
+        log.info("Downloading audio from Innertube player API: {} ({})", videoId, ext);
+
+        HttpRequest dlRequest = HttpRequest.newBuilder()
+            .uri(URI.create(audioUrl))
+            .timeout(java.time.Duration.ofMinutes(3))
+            .GET()
+            .build();
+
+        HttpResponse<InputStream> dlResponse = httpClient.send(dlRequest, HttpResponse.BodyHandlers.ofInputStream());
+
+        if (dlResponse.statusCode() != 200) {
+            throw new IOException("Audio download returned status " + dlResponse.statusCode());
+        }
+
+        try (InputStream in = dlResponse.body()) {
             Files.copy(in, outputPath, StandardCopyOption.REPLACE_EXISTING);
         }
 
