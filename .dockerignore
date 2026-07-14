@@ -1,0 +1,9 @@
+build/
+.gradle/
+.idea/
+*.iml
+data/
+*.bat
+*.ps1
+node_modules/
+.git/

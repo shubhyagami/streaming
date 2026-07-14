@@ -1,0 +1,9 @@
+build/
+.gradle/
+.idea/
+*.iml
+data/
+*.log
+*.err
+start.bat
+kill_port.bat

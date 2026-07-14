@@ -1,0 +1,51 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: poweramp-spring
+  datasource:
+    url: jdbc:h2:file:D:/Program Files/poweramp-spring-boot/data/poweramp;AUTO_SERVER=TRUE;DB_CLOSE_ON_EXIT=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+    defer-datasource-initialization: true
+  sql:
+    init:
+      mode: always
+  thymeleaf:
+    cache: false
+    mode: HTML
+    encoding: UTF-8
+
+poweramp:
+  library:
+    base-path: /music
+  audio:
+    temp-output: /tmp/poweramp-output
+  temp-dir: ${java.io.tmpdir}/poweramp-stream
+  rapidapi:
+    host: youtube-mp36.p.rapidapi.com
+    spotify-host: spotify81.p.rapidapi.com
+    key: e9f2c625ebmsh6cd2de7109f2f5ep1f9991jsn4f3b636412b2
+  defaults:
+    sample-rate: 44100
+    bit-depth: 16
+    channels: 2
+
+logging:
+  level:
+    com.poweramp: DEBUG
+    org.springframework: WARN
