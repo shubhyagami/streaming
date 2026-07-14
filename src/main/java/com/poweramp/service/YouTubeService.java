@@ -50,6 +50,11 @@ public class YouTubeService {
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(INNERTUBE_URL))
             .header("Content-Type", "application/json")
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .header("Accept", "*/*")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Origin", "https://www.youtube.com")
+            .header("Referer", "https://www.youtube.com")
             .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
             .build();
 
@@ -261,18 +266,55 @@ public class YouTubeService {
         Path dir = Paths.get(tempDir);
         Files.createDirectories(dir);
 
-        String bodyJson = "{\"context\":{\"client\":{\"clientName\":\"WEB\",\"clientVersion\":\"2.20240201.08.00\",\"hl\":\"en\",\"gl\":\"US\"}},\"videoId\":\"" + escapeJson(videoId) + "\"}";
+        // Try multiple Innertube clients in order of permissiveness
+        String[][] clients = {
+            {"ANDROID_MUSIC", "6.27.51", "30"},
+            {"ANDROID", "19.09.37", "30"},
+            {"WEB", "2.20240201.08.00", ""}
+        };
+
+        IOException lastError = new IOException("All clients exhausted");
+        for (String[] client : clients) {
+            try {
+                Map<String, Object> streamingData = fetchPlayerStreamingData(videoId, client[0], client[1], client[2]);
+                if (streamingData == null) continue;
+                Path result = downloadFromStreamingData(videoId, streamingData, dir);
+                if (result != null) return result;
+            } catch (IOException e) {
+                lastError = e;
+                log.warn("Player API client {} failed: {}", client[0], e.getMessage());
+            }
+        }
+        throw lastError;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> fetchPlayerStreamingData(String videoId, String clientName, String clientVersion, String sdkVersion) throws IOException, InterruptedException {
+        StringBuilder body = new StringBuilder();
+        body.append("{\"context\":{\"client\":{");
+        body.append("\"clientName\":\"").append(clientName).append("\",");
+        body.append("\"clientVersion\":\"").append(clientVersion).append("\"");
+        if (!sdkVersion.isEmpty()) {
+            body.append(",\"androidSdkVersion\":").append(sdkVersion);
+        }
+        body.append(",\"hl\":\"en\",\"gl\":\"US\"");
+        body.append("}},\"videoId\":\"").append(escapeJson(videoId)).append("\"}");
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://www.youtube.com/youtubei/v1/player?key=" + INNERTUBE_KEY))
             .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .header("Accept", "*/*")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Origin", "https://www.youtube.com")
+            .header("Referer", "https://www.youtube.com")
+            .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
             .build();
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
-            throw new IOException("Player API returned status " + response.statusCode());
+            throw new IOException("Player API returned status " + response.statusCode() + " for client " + clientName);
         }
 
         Map<String, Object> root = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
@@ -281,22 +323,23 @@ public class YouTubeService {
             String pStatus = (String) playability.get("status");
             if (!"OK".equals(pStatus)) {
                 String reason = (String) playability.get("reason");
-                throw new IOException("Video not playable: " + (reason != null ? reason : pStatus));
+                throw new IOException("Video not playable (" + clientName + "): " + (reason != null ? reason : pStatus));
             }
         }
 
-        Map<String, Object> streamingData = (Map<String, Object>) root.get("streamingData");
-        if (streamingData == null) {
-            throw new IOException("No streaming data available for this video");
-        }
+        return (Map<String, Object>) root.get("streamingData");
+    }
 
-        // Collect audio-only formats from adaptiveFormats
+    @SuppressWarnings("unchecked")
+    private Path downloadFromStreamingData(String videoId, Map<String, Object> streamingData, Path dir) throws IOException {
         List<Map<String, Object>> adaptive = (List<Map<String, Object>>) streamingData.get("adaptiveFormats");
         if (adaptive == null) adaptive = new ArrayList<>();
         List<Map<String, Object>> regular = (List<Map<String, Object>>) streamingData.get("formats");
         if (regular == null) regular = new ArrayList<>();
 
         Map<String, Object> bestFormat = null;
+
+        // First pass: audio-only with direct URLs
         for (Map<String, Object> fmt : adaptive) {
             String mime = (String) fmt.get("mimeType");
             String url = (String) fmt.get("url");
@@ -317,8 +360,8 @@ public class YouTubeService {
             }
         }
 
+        // Second pass: regular formats with direct URLs
         if (bestFormat == null) {
-            // Try regular formats
             for (Map<String, Object> fmt : regular) {
                 String mime = (String) fmt.get("mimeType");
                 String url = (String) fmt.get("url");
@@ -329,25 +372,13 @@ public class YouTubeService {
             }
         }
 
+        // Third pass: signature-ciphered formats
         if (bestFormat == null) {
-            // Check for signature ciphered URLs
             for (Map<String, Object> fmt : adaptive) {
                 String cipher = (String) fmt.get("signatureCipher");
                 if (cipher != null) {
-                    String[] params = cipher.split("&");
-                    String urlParam = null;
-                    String spParam = null;
-                    String sigParam = null;
-                    for (String p : params) {
-                        if (p.startsWith("url=")) urlParam = p.substring(4);
-                        else if (p.startsWith("sp=")) spParam = p.substring(3);
-                        else if (p.startsWith("s=")) sigParam = p.substring(2);
-                    }
-                    if (urlParam != null) {
-                        String decodedUrl = java.net.URLDecoder.decode(urlParam, "UTF-8");
-                        if (sigParam != null) {
-                            decodedUrl += "&" + (spParam != null ? java.net.URLDecoder.decode(spParam, "UTF-8") : "sig") + "=" + java.net.URLDecoder.decode(sigParam, "UTF-8");
-                        }
+                    String decodedUrl = decipherUrl(cipher);
+                    if (decodedUrl != null) {
                         String mime = (String) fmt.get("mimeType");
                         if (mime != null && mime.startsWith("audio")) {
                             bestFormat = fmt;
@@ -360,7 +391,7 @@ public class YouTubeService {
         }
 
         if (bestFormat == null) {
-            throw new IOException("No usable audio format found. Try another video.");
+            throw new IOException("No usable audio format found");
         }
 
         String audioUrl = (String) bestFormat.get("url");
@@ -377,17 +408,24 @@ public class YouTubeService {
         }
 
         Path outputPath = dir.resolve(videoId + "." + ext);
-        log.info("Downloading audio from Innertube player API: {} ({})", videoId, ext);
+        log.info("Downloading audio ({}) from format: {}", ext, bestFormat.getOrDefault("itag", "?"));
 
         HttpRequest dlRequest = HttpRequest.newBuilder()
             .uri(URI.create(audioUrl))
             .timeout(java.time.Duration.ofMinutes(3))
             .GET()
+            .header("User-Agent", "Mozilla/5.0")
             .build();
 
-        HttpResponse<InputStream> dlResponse = httpClient.send(dlRequest, HttpResponse.BodyHandlers.ofInputStream());
+        HttpResponse<InputStream> dlResponse;
+        try {
+            dlResponse = httpClient.send(dlRequest, HttpResponse.BodyHandlers.ofInputStream());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Download interrupted", e);
+        }
 
-        if (dlResponse.statusCode() != 200) {
+        if (dlResponse.statusCode() != 200 && dlResponse.statusCode() != 206) {
             throw new IOException("Audio download returned status " + dlResponse.statusCode());
         }
 
@@ -397,6 +435,31 @@ public class YouTubeService {
 
         log.info("Saved: {} ({} bytes)", outputPath.getFileName(), Files.size(outputPath));
         return outputPath;
+    }
+
+    private String decipherUrl(String cipher) {
+        try {
+            String[] params = cipher.split("&");
+            String urlParam = null;
+            String spParam = null;
+            String sigParam = null;
+            for (String p : params) {
+                if (p.startsWith("url=")) urlParam = p.substring(4);
+                else if (p.startsWith("sp=")) spParam = p.substring(3);
+                else if (p.startsWith("s=")) sigParam = p.substring(2);
+            }
+            if (urlParam != null) {
+                String decodedUrl = java.net.URLDecoder.decode(urlParam, "UTF-8");
+                if (sigParam != null) {
+                    String sp = java.net.URLDecoder.decode(spParam != null ? spParam : "sig", "UTF-8");
+                    decodedUrl += "&" + sp + "=" + java.net.URLDecoder.decode(sigParam, "UTF-8");
+                }
+                return decodedUrl;
+            }
+        } catch (Exception e) {
+            log.warn("Failed to decipher URL: {}", e.getMessage());
+        }
+        return null;
     }
 
 }
