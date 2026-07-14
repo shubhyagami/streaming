@@ -453,7 +453,17 @@ public class YouTubeService {
                 "-o", dir.resolve(videoId + ".%(ext)s").toString(),
                 videoUrl
             },
-            // Strategy 3: force tv client
+            // Strategy 3: force ios client (currently the most reliable for bypassing bot checks)
+            {
+                ytdlpPath, "-x", "--audio-format", "mp3", "--audio-quality", "5",
+                "--no-check-certificates", "--no-warnings", "--no-playlist",
+                "--no-part", "--no-cache-dir",
+                "--socket-timeout", "30",
+                "--extractor-args", "youtube:player_client=ios",
+                "-o", dir.resolve(videoId + ".%(ext)s").toString(),
+                videoUrl
+            },
+            // Strategy 4: force tv client
             {
                 ytdlpPath, "-x", "--audio-format", "mp3", "--audio-quality", "5",
                 "--no-check-certificates", "--no-warnings", "--no-playlist",
@@ -592,6 +602,7 @@ public class YouTubeService {
 
         HttpRequest downloadRequest = HttpRequest.newBuilder()
             .uri(URI.create(downloadUrl))
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .timeout(java.time.Duration.ofMinutes(3))
             .GET()
             .build();
