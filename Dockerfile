@@ -1,6 +1,6 @@
 FROM gradle:8-jdk21 AS build
 WORKDIR /app
-COPY build.gradle settings.gradle ./
+COPY build.gradle.kts settings.gradle.kts gradle.properties ./
 COPY src ./src
 RUN gradle build --no-daemon -x test
 
