@@ -9,8 +9,6 @@ services:
     envVars:
       - key: SERVER_PORT
         value: 8085
-      - key: RAPIDAPI_KEY
-        sync: false
       - key: SPRING_DATASOURCE_URL
         value: jdbc:h2:file:./data/poweramp;AUTO_SERVER=TRUE;DB_CLOSE_ON_EXIT=TRUE
       - key: SPRING_JPA_HIBERNATE_DDL_AUTO
