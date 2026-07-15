@@ -71,13 +71,13 @@ public class YouTubeService {
     public List<SearchResult> search(String query, int limit) throws IOException, InterruptedException {
         List<String> errors = new ArrayList<>();
 
-        // Method 1: InnerTube API
+        // Method 1: Scrape YouTube search page HTML (most reliable, no API key needed)
         try {
-            List<SearchResult> results = searchWithInnerTube(query, limit);
+            List<SearchResult> results = searchByScrapingYouTube(query, limit);
             if (results != null && !results.isEmpty()) return results;
         } catch (Exception e) {
-            errors.add("InnerTube: " + (e.getMessage() != null ? e.getMessage() : "unknown"));
-            log.warn("InnerTube search failed: {}", e.getMessage());
+            errors.add("Scrape: " + (e.getMessage() != null ? e.getMessage() : "unknown"));
+            log.warn("YouTube scrape search failed: {}", e.getMessage());
         }
 
         // Method 2: Piped API fallback
@@ -92,77 +92,125 @@ public class YouTubeService {
         throw new IOException("Search failed. " + String.join(" | ", errors));
     }
 
-    @SuppressWarnings("unchecked")
-    private List<SearchResult> searchWithInnerTube(String query, int limit) throws IOException, InterruptedException {
-        String bodyJson = "{\"context\":{\"client\":{\"clientName\":\"WEB\",\"clientVersion\":\"2.20240201.08.00\",\"hl\":\"en\",\"gl\":\"US\"}},\"query\":\"" + escapeJson(query) + "\"}";
+    // Extract JSON object from HTML by counting braces (more robust than regex)
+    private String extractJsonFromHtml(String html, String marker) {
+        int idx = html.indexOf(marker);
+        if (idx < 0) return null;
+        int start = html.indexOf('{', idx);
+        if (start < 0) return null;
+        int depth = 0;
+        for (int i = start; i < html.length(); i++) {
+            char c = html.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') {
+                depth--;
+                if (depth == 0) return html.substring(start, i + 1);
+            }
+        }
+        return null;
+    }
 
-        HttpRequest request = ytApiRequest(INNERTUBE_URL)
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
+    @SuppressWarnings("unchecked")
+    private List<SearchResult> searchByScrapingYouTube(String query, int limit) throws IOException, InterruptedException {
+        String encoded = java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8);
+        String url = "https://www.youtube.com/results?search_query=" + encoded;
+
+        HttpRequest req = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .header("User-Agent", YT_USER_AGENT)
+            .header("Accept-Language", "en-US,en;q=0.5")
+            .GET()
             .build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> res = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+        String body = res.body();
 
-        if (response.statusCode() != 200) {
-            throw new IOException("Innertube API returned status " + response.statusCode());
-        }
-
-        Map<String, Object> root = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
         List<SearchResult> results = new ArrayList<>();
 
-        try {
-            Map<String, Object> contents = (Map<String, Object>) root.get("contents");
-            if (contents == null) return results;
-            Map<String, Object> twoCol = (Map<String, Object>) contents.get("twoColumnSearchResultsRenderer");
-            if (twoCol == null) return results;
-            Map<String, Object> primary = (Map<String, Object>) twoCol.get("primaryContents");
-            if (primary == null) return results;
-            Map<String, Object> sectionList = (Map<String, Object>) primary.get("sectionListRenderer");
-            if (sectionList == null) return results;
-            List<Map<String, Object>> sections = (List<Map<String, Object>>) sectionList.get("contents");
-            if (sections == null) return results;
+        // Extract ytInitialData JSON using brace counting
+        String json = extractJsonFromHtml(body, "ytInitialData");
+        if (json != null) {
+            json = json.replace("\\x26", "&").replace("\\u0026", "&").replace("\\/", "/");
+            try {
+                Map<String, Object> root = mapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+                Map<String, Object> contents = (Map<String, Object>) root.get("contents");
+                if (contents != null) {
+                    Map<String, Object> twoCol = (Map<String, Object>) contents.get("twoColumnSearchResultsRenderer");
+                    if (twoCol != null) {
+                        Map<String, Object> primary = (Map<String, Object>) twoCol.get("primaryContents");
+                        if (primary != null) {
+                            Map<String, Object> sectionList = (Map<String, Object>) primary.get("sectionListRenderer");
+                            if (sectionList != null) {
+                                List<Map<String, Object>> sections = (List<Map<String, Object>>) sectionList.get("contents");
+                                if (sections != null) {
+                                    for (Map<String, Object> section : sections) {
+                                        Map<String, Object> itemSection = (Map<String, Object>) section.get("itemSectionRenderer");
+                                        if (itemSection == null) continue;
+                                        List<Map<String, Object>> items = (List<Map<String, Object>>) itemSection.get("contents");
+                                        if (items == null) continue;
+                                        for (Map<String, Object> item : items) {
+                                            Map<String, Object> video = (Map<String, Object>) item.get("videoRenderer");
+                                            if (video == null) continue;
+                                            String videoId = (String) video.get("videoId");
+                                            if (videoId == null) continue;
 
-            for (Map<String, Object> section : sections) {
-                Map<String, Object> itemSection = (Map<String, Object>) section.get("itemSectionRenderer");
-                if (itemSection == null) continue;
-                List<Map<String, Object>> items = (List<Map<String, Object>>) itemSection.get("contents");
-                if (items == null) continue;
+                                            String title = extractText(video, "title");
+                                            if (title == null || title.isEmpty()) title = extractSimpleText((Map<String, Object>) video.get("title"));
+                                            String channel = extractText(video, "longBylineText");
+                                            if (channel == null || channel.isEmpty()) channel = extractText(video, "ownerText");
 
-                for (Map<String, Object> item : items) {
-                    Map<String, Object> video = (Map<String, Object>) item.get("videoRenderer");
-                    if (video == null) continue;
+                                            long duration = 0;
+                                            try {
+                                                Map<String, Object> lengthText = (Map<String, Object>) video.get("lengthText");
+                                                if (lengthText != null) {
+                                                    String durStr = extractSimpleText(lengthText);
+                                                    if (durStr != null) duration = parseDuration(durStr);
+                                                }
+                                            } catch (Exception ignored) {}
 
-                    String videoId = (String) video.get("videoId");
-                    if (videoId == null) continue;
+                                            String thumb = (String) video.get("thumbnail");
+                                            if (thumb == null || thumb.isBlank()) thumb = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
 
-                    String title = extractText(video, "title");
-                    String channel = extractText(video, "longBylineText");
-                    if (channel == null || channel.isEmpty()) {
-                        channel = extractText(video, "ownerText");
-                    }
-
-                    long duration = 0;
-                    try {
-                        Map<String, Object> lengthText = (Map<String, Object>) video.get("lengthText");
-                        if (lengthText != null) {
-                            String durStr = extractSimpleText(lengthText);
-                            duration = parseDuration(durStr);
+                                            results.add(new SearchResult(videoId, title != null ? title : "",
+                                                channel != null ? channel : "", duration, thumb));
+                                            if (results.size() >= limit) break;
+                                        }
+                                        if (results.size() >= limit) break;
+                                    }
+                                }
+                            }
                         }
-                    } catch (Exception e) {
-                        // ignore duration parse errors
                     }
-
-                    String thumbnail = extractThumbnail(video);
-
-                    results.add(new SearchResult(videoId, title != null ? title : "",
-                        channel != null ? channel : "", duration, thumbnail != null ? thumbnail : ""));
-
-                    if (results.size() >= limit) break;
                 }
-                if (results.size() >= limit) break;
+            } catch (Exception e) {
+                log.warn("Failed to parse scraped YouTube JSON", e);
             }
-        } catch (Exception e) {
-            log.warn("Failed to parse InnerTube search results", e);
+        }
+
+        // If JSON parsing failed, try regex fallback
+        if (results.isEmpty()) {
+            java.util.regex.Pattern idPat = java.util.regex.Pattern.compile("\"videoId\":\"([^\"]+)\"");
+            java.util.regex.Matcher idMat = idPat.matcher(body);
+            List<String> ids = new ArrayList<>();
+            while (idMat.find()) {
+                String vid = idMat.group(1);
+                if (!ids.contains(vid)) ids.add(vid);
+                if (ids.size() >= limit) break;
+            }
+            java.util.regex.Pattern titlePat = java.util.regex.Pattern.compile("\"text\":\"([^\"]+?)\"");
+            java.util.regex.Matcher titleMat = titlePat.matcher(body);
+            List<String> titles = new ArrayList<>();
+            while (titleMat.find()) {
+                String t = titleMat.group(1);
+                if (!titles.contains(t)) titles.add(t);
+                if (titles.size() >= limit) break;
+            }
+            int maxResults = Math.min(limit, ids.size());
+            for (int i = 0; i < maxResults; i++) {
+                results.add(new SearchResult(ids.get(i),
+                    i < titles.size() ? titles.get(i) : "Unknown", "",
+                    0, "https://i.ytimg.com/vi/" + ids.get(i) + "/hqdefault.jpg"));
+            }
         }
 
         return results;
@@ -326,8 +374,9 @@ public class YouTubeService {
     // Download Pipeline — tries each method in order until one succeeds:
     //   1. Piped API    (fast, proxied streams, pure HTTP, no dependencies)
     //   2. RapidAPI     (3rd party, bypasses YouTube bot detection entirely)
-    //   3. yt-dlp       (subprocess, good fallback when others fail)
-    //   4. Innertube    (last resort, often blocked on datacenter IPs)
+    //   3. YouTube      (scrape watch page HTML, extract direct audio URLs)
+    //   4. yt-dlp       (subprocess, good fallback when others fail)
+    //   5. Innertube    (last resort)
     // ===================================================================
 
     public Path downloadAudio(String videoId) throws IOException, InterruptedException {
@@ -357,7 +406,20 @@ public class YouTubeService {
             log.warn("RapidAPI failed for {}: {}", videoId, msg);
         }
 
-        // 3. yt-dlp — subprocess, bypasses some restrictions with extractor args
+        // 3. Direct YouTube page scrape — extract streaming data from watch page HTML
+        try {
+            Path result = downloadFromYouTubeDirect(videoId);
+            if (result != null) {
+                log.info("✓ Downloaded via YouTube scrape: {}", videoId);
+                return result;
+            }
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
+            errors.add("YouTubeScrape: " + msg);
+            log.warn("YouTube scrape failed for {}: {}", videoId, msg);
+        }
+
+        // 4. yt-dlp — subprocess, bypasses some restrictions with extractor args
         try {
             Path result = downloadWithYtDlp(videoId);
             if (result != null) {
@@ -370,7 +432,7 @@ public class YouTubeService {
             log.warn("yt-dlp failed for {}: {}", videoId, msg);
         }
 
-        // 4. Innertube Player API — last resort
+        // 5. Innertube Player API — last resort
         try {
             Path result = downloadWithPlayerApi(videoId);
             log.info("✓ Downloaded via Innertube: {}", videoId);
@@ -383,7 +445,7 @@ public class YouTubeService {
 
         String allErrors = String.join(" | ", errors);
         log.error("All download methods failed for {}: {}", videoId, allErrors);
-        throw new IOException("Could not download audio. Tried 4 methods, all failed. Details: " + allErrors);
+        throw new IOException("Could not download audio. Tried 5 methods, all failed. Details: " + allErrors);
     }
 
     // ===== Method 1: Piped API =====
@@ -754,7 +816,114 @@ public class YouTubeService {
         return outputPath;
     }
 
-    // ===== Method 4: Innertube Player API (last resort) =====
+    // ===== Method 3: Direct YouTube page scrape =====
+    // Scrapes youtube.com/watch?v=VIDEO_ID HTML, extracts ytInitialPlayerResponse JSON,
+    // finds the best audio-only stream URL, and downloads it directly.
+
+    @SuppressWarnings("unchecked")
+    private Path downloadFromYouTubeDirect(String videoId) throws IOException, InterruptedException {
+        Path dir = Paths.get(tempDir);
+        Files.createDirectories(dir);
+
+        String pageUrl = "https://www.youtube.com/watch?v=" + videoId;
+
+        HttpRequest pageReq = HttpRequest.newBuilder()
+            .uri(URI.create(pageUrl))
+            .header("User-Agent", YT_USER_AGENT)
+            .header("Accept-Language", "en-US,en;q=0.5")
+            .GET()
+            .build();
+
+        HttpResponse<String> pageRes = httpClient.send(pageReq, HttpResponse.BodyHandlers.ofString());
+        String body = pageRes.body();
+
+        // Extract ytInitialPlayerResponse JSON via brace counting
+        String json = extractJsonFromHtml(body, "ytInitialPlayerResponse");
+        if (json == null) throw new IOException("No ytInitialPlayerResponse found");
+
+        json = json.replace("\\x26", "&").replace("\\u0026", "&").replace("\\/", "/");
+        Map<String, Object> root = mapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        Map<String, Object> streamingData = (Map<String, Object>) root.get("streamingData");
+        if (streamingData == null) throw new IOException("No streamingData in player response");
+
+        List<Map<String, Object>> adaptive = (List<Map<String, Object>>) streamingData.get("adaptiveFormats");
+        if (adaptive == null) adaptive = new ArrayList<>();
+        List<Map<String, Object>> regular = (List<Map<String, Object>>) streamingData.get("formats");
+        if (regular == null) regular = new ArrayList<>();
+
+        // Find best audio-only stream with a URL
+        String bestUrl = null;
+        int bestBitrate = -1;
+        for (Map<String, Object> fmt : adaptive) {
+            String mime = (String) fmt.get("mimeType");
+            if (mime == null || !mime.startsWith("audio/")) continue;
+            String url = (String) fmt.get("url");
+            if (url == null || url.isBlank()) continue;
+            int bitrate = fmt.containsKey("bitrate") ? ((Number) fmt.get("bitrate")).intValue() : 0;
+            if (bitrate > bestBitrate) {
+                bestBitrate = bitrate;
+                bestUrl = url;
+            }
+        }
+
+        // Fallback to first format with a URL
+        if (bestUrl == null) {
+            for (Map<String, Object> fmt : adaptive) {
+                String url = (String) fmt.get("url");
+                if (url != null && !url.isBlank()) { bestUrl = url; break; }
+            }
+        }
+        if (bestUrl == null) {
+            for (Map<String, Object> fmt : regular) {
+                String url = (String) fmt.get("url");
+                if (url != null && !url.isBlank()) { bestUrl = url; break; }
+            }
+        }
+
+        if (bestUrl == null) throw new IOException("No audio URL found in scraped page");
+
+        // Determine extension from content type
+        String mimeType = "";
+        for (Map<String, Object> fmt : adaptive) {
+            String mime = (String) fmt.get("mimeType");
+            String url = (String) fmt.get("url");
+            if (url != null && url.equals(bestUrl) && mime != null) { mimeType = mime; break; }
+        }
+        String ext = "m4a";
+        if (mimeType.contains("opus")) ext = "opus";
+        else if (mimeType.contains("webm")) ext = "webm";
+        else if (mimeType.contains("mp4")) ext = "m4a";
+
+        Path outputPath = dir.resolve(videoId + "." + ext);
+
+        HttpRequest audioReq = HttpRequest.newBuilder()
+            .uri(URI.create(bestUrl))
+            .header("User-Agent", YT_USER_AGENT)
+            .header("Referer", "https://www.youtube.com/")
+            .timeout(java.time.Duration.ofMinutes(3))
+            .GET()
+            .build();
+
+        HttpResponse<InputStream> audioRes = httpClient.send(audioReq, HttpResponse.BodyHandlers.ofInputStream());
+        if (audioRes.statusCode() != 200 && audioRes.statusCode() != 206) {
+            throw new IOException("YouTube scrape download status " + audioRes.statusCode());
+        }
+
+        try (InputStream in = audioRes.body()) {
+            Files.copy(in, outputPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        long size = Files.size(outputPath);
+        if (size < 10000) {
+            Files.deleteIfExists(outputPath);
+            throw new IOException("YouTube scrape download too small (" + size + " bytes)");
+        }
+
+        log.info("YouTube scrape saved: {} ({} bytes)", outputPath.getFileName(), size);
+        return outputPath;
+    }
+
+    // ===== Method 5: Innertube Player API (last resort) =====
 
     @SuppressWarnings("unchecked")
     private Path downloadWithPlayerApi(String videoId) throws IOException, InterruptedException {
