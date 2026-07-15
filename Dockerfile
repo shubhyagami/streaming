@@ -7,11 +7,13 @@ RUN gradle build --no-daemon -x test
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 
-# Install yt-dlp, ffmpeg (python3 no longer needed as we use the standalone linux binary)
+# Install yt-dlp (standalone binary, auto-detect architecture), ffmpeg
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg curl && \
-    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp && \
+    (curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp || \
+     curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64 -o /usr/local/bin/yt-dlp) && \
     chmod a+rx /usr/local/bin/yt-dlp && \
+    /usr/local/bin/yt-dlp --version && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/build/libs/poweramp-spring.jar app.jar

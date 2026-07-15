@@ -37,6 +37,10 @@ public class YouTubeService {
     private static final String INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
     private static final String INNERTUBE_URL = "https://www.youtube.com/youtubei/v1/search?key=" + INNERTUBE_KEY;
 
+    // Cookie to bypass YouTube bot detection on datacenter IPs
+    private static final String YT_CONSENT_COOKIE = "CONSENT=YES+cb.20261010-03-p0.en+FX+";
+    private static final String YT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
     // Multiple Piped API instances for redundancy
     private static final String[] PIPED_INSTANCES = {
         "https://pipedapi.kavin.rocks",
@@ -65,16 +69,35 @@ public class YouTubeService {
     // ===== Search =====
 
     public List<SearchResult> search(String query, int limit) throws IOException, InterruptedException {
+        List<String> errors = new ArrayList<>();
+
+        // Method 1: InnerTube API
+        try {
+            List<SearchResult> results = searchWithInnerTube(query, limit);
+            if (results != null && !results.isEmpty()) return results;
+        } catch (Exception e) {
+            errors.add("InnerTube: " + (e.getMessage() != null ? e.getMessage() : "unknown"));
+            log.warn("InnerTube search failed: {}", e.getMessage());
+        }
+
+        // Method 2: Piped API fallback
+        try {
+            List<SearchResult> results = searchWithPipedApi(query, limit);
+            if (results != null && !results.isEmpty()) return results;
+        } catch (Exception e) {
+            errors.add("Piped: " + (e.getMessage() != null ? e.getMessage() : "unknown"));
+            log.warn("Piped search failed: {}", e.getMessage());
+        }
+
+        throw new IOException("Search failed. " + String.join(" | ", errors));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<SearchResult> searchWithInnerTube(String query, int limit) throws IOException, InterruptedException {
         String bodyJson = "{\"context\":{\"client\":{\"clientName\":\"WEB\",\"clientVersion\":\"2.20240201.08.00\",\"hl\":\"en\",\"gl\":\"US\"}},\"query\":\"" + escapeJson(query) + "\"}";
 
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(INNERTUBE_URL))
+        HttpRequest request = ytApiRequest(INNERTUBE_URL)
             .header("Content-Type", "application/json")
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .header("Accept", "*/*")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Origin", "https://www.youtube.com")
-            .header("Referer", "https://www.youtube.com")
             .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
             .build();
 
@@ -139,7 +162,61 @@ public class YouTubeService {
                 if (results.size() >= limit) break;
             }
         } catch (Exception e) {
-            log.warn("Failed to parse search results", e);
+            log.warn("Failed to parse InnerTube search results", e);
+        }
+
+        return results;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<SearchResult> searchWithPipedApi(String query, int limit) throws IOException, InterruptedException {
+        List<SearchResult> results = new ArrayList<>();
+
+        for (String instance : PIPED_INSTANCES) {
+            try {
+                String apiUrl = instance + "/search?q=" + java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8) + "&filter=videos";
+                log.info("Trying Piped search: {}", apiUrl);
+
+                HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(apiUrl))
+                    .header("Accept", "application/json")
+                    .header("User-Agent", YT_USER_AGENT)
+                    .timeout(java.time.Duration.ofSeconds(10))
+                    .GET()
+                    .build();
+
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+                if (response.statusCode() != 200) continue;
+
+                Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+                if (json.containsKey("error")) continue;
+
+                List<Map<String, Object>> items = (List<Map<String, Object>>) json.get("items");
+                if (items == null) continue;
+
+                for (Map<String, Object> item : items) {
+                    String videoId = (String) item.get("url");
+                    if (videoId == null) continue;
+                    // Piped returns "/watch?v=VIDEO_ID" format
+                    if (videoId.startsWith("/watch?v=")) videoId = videoId.substring(9);
+
+                    String title = (String) item.get("title");
+                    String channel = (String) item.get("uploader");
+                    Number durObj = (Number) item.get("duration");
+                    long duration = durObj != null ? durObj.longValue() : 0;
+                    String thumbnail = (String) item.get("thumbnail");
+
+                    results.add(new SearchResult(videoId, title != null ? title : "",
+                        channel != null ? channel : "", duration, thumbnail != null ? thumbnail : ""));
+
+                    if (results.size() >= limit) break;
+                }
+
+                if (!results.isEmpty()) return results;
+            } catch (Exception e) {
+                log.warn("Piped instance {} search failed: {}", instance, e.getMessage());
+            }
         }
 
         return results;
@@ -213,11 +290,43 @@ public class YouTubeService {
         return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
+    // Common headers for YouTube API requests (bypass bot detection)
+    // NOTE: Java HttpClient does NOT auto-decompress gzip/brotli, so Accept-Encoding is omitted
+    private HttpRequest.Builder ytApiRequest(String uri) {
+        return HttpRequest.newBuilder()
+            .uri(URI.create(uri))
+            .header("User-Agent", YT_USER_AGENT)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Origin", "https://www.youtube.com")
+            .header("Referer", "https://www.youtube.com")
+            .header("Cookie", YT_CONSENT_COOKIE)
+            .header("sec-ch-ua", "\"Google Chrome\";v=\"125\", \"Chromium\";v=\"125\", \"Not.A/Brand\";v=\"24\"")
+            .header("sec-ch-ua-mobile", "?0")
+            .header("sec-ch-ua-platform", "\"Windows\"");
+    }
+
+    // Parse query string like "key1=value1&key2=value2" into a map
+    private Map<String, String> parseQueryString(String qs) {
+        Map<String, String> params = new java.util.HashMap<>();
+        if (qs == null || qs.isBlank()) return params;
+        String[] pairs = qs.split("&");
+        for (String pair : pairs) {
+            int eq = pair.indexOf('=');
+            if (eq > 0) {
+                String key = java.net.URLDecoder.decode(pair.substring(0, eq), java.nio.charset.StandardCharsets.UTF_8);
+                String value = java.net.URLDecoder.decode(pair.substring(eq + 1), java.nio.charset.StandardCharsets.UTF_8);
+                params.put(key, value);
+            }
+        }
+        return params;
+    }
+
     // ===================================================================
     // Download Pipeline — tries each method in order until one succeeds:
     //   1. Piped API    (fast, proxied streams, pure HTTP, no dependencies)
-    //   2. yt-dlp       (reliable subprocess, needs yt-dlp + ffmpeg installed)
-    //   3. RapidAPI     (3rd party, may have quota limits)
+    //   2. RapidAPI     (3rd party, bypasses YouTube bot detection entirely)
+    //   3. yt-dlp       (subprocess, good fallback when others fail)
     //   4. Innertube    (last resort, often blocked on datacenter IPs)
     // ===================================================================
 
@@ -237,7 +346,18 @@ public class YouTubeService {
             log.warn("Piped API failed for {}: {}", videoId, msg);
         }
 
-        // 2. yt-dlp — most reliable but needs subprocess
+        // 2. RapidAPI — third-party service, bypasses YouTube's bot detection entirely
+        try {
+            Path result = downloadWithRapidApi(videoId);
+            log.info("✓ Downloaded via RapidAPI: {}", videoId);
+            return result;
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
+            errors.add("RapidAPI: " + msg);
+            log.warn("RapidAPI failed for {}: {}", videoId, msg);
+        }
+
+        // 3. yt-dlp — subprocess, bypasses some restrictions with extractor args
         try {
             Path result = downloadWithYtDlp(videoId);
             if (result != null) {
@@ -248,17 +368,6 @@ public class YouTubeService {
             String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
             errors.add("yt-dlp: " + msg);
             log.warn("yt-dlp failed for {}: {}", videoId, msg);
-        }
-
-        // 3. RapidAPI
-        try {
-            Path result = downloadWithRapidApi(videoId);
-            log.info("✓ Downloaded via RapidAPI: {}", videoId);
-            return result;
-        } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
-            errors.add("RapidAPI: " + msg);
-            log.warn("RapidAPI failed for {}: {}", videoId, msg);
         }
 
         // 4. Innertube Player API — last resort
@@ -432,14 +541,16 @@ public class YouTubeService {
 
         String videoUrl = "https://www.youtube.com/watch?v=" + videoId;
 
-        // Try multiple strategies
+        // Try multiple strategies with consent bypass
         String[][] strategies = {
-            // Strategy 1: let yt-dlp choose the best approach (latest versions are smart)
+            // Strategy 1: default with consent bypass and cookie
             {
                 ytdlpPath, "-x", "--audio-format", "mp3", "--audio-quality", "5",
                 "--no-check-certificates", "--no-warnings", "--no-playlist",
                 "--no-part", "--no-cache-dir",
                 "--socket-timeout", "30",
+                "--extractor-args", "youtube:consent=1",
+                "--add-header", "Cookie: " + YT_CONSENT_COOKIE,
                 "-o", dir.resolve(videoId + ".%(ext)s").toString(),
                 videoUrl
             },
@@ -449,7 +560,8 @@ public class YouTubeService {
                 "--no-check-certificates", "--no-warnings", "--no-playlist",
                 "--no-part", "--no-cache-dir",
                 "--socket-timeout", "30",
-                "--extractor-args", "youtube:player_client=mweb",
+                "--extractor-args", "youtube:player_client=mweb;consent=1",
+                "--add-header", "Cookie: " + YT_CONSENT_COOKIE,
                 "-o", dir.resolve(videoId + ".%(ext)s").toString(),
                 videoUrl
             },
@@ -459,7 +571,8 @@ public class YouTubeService {
                 "--no-check-certificates", "--no-warnings", "--no-playlist",
                 "--no-part", "--no-cache-dir",
                 "--socket-timeout", "30",
-                "--extractor-args", "youtube:player_client=ios",
+                "--extractor-args", "youtube:player_client=ios;consent=1",
+                "--add-header", "Cookie: " + YT_CONSENT_COOKIE,
                 "-o", dir.resolve(videoId + ".%(ext)s").toString(),
                 videoUrl
             },
@@ -469,7 +582,19 @@ public class YouTubeService {
                 "--no-check-certificates", "--no-warnings", "--no-playlist",
                 "--no-part", "--no-cache-dir",
                 "--socket-timeout", "30",
-                "--extractor-args", "youtube:player_client=tv",
+                "--extractor-args", "youtube:player_client=tv;consent=1",
+                "--add-header", "Cookie: " + YT_CONSENT_COOKIE,
+                "-o", dir.resolve(videoId + ".%(ext)s").toString(),
+                videoUrl
+            },
+            // Strategy 5: force android_music client (often bypasses bot checks)
+            {
+                ytdlpPath, "-x", "--audio-format", "mp3", "--audio-quality", "5",
+                "--no-check-certificates", "--no-warnings", "--no-playlist",
+                "--no-part", "--no-cache-dir",
+                "--socket-timeout", "30",
+                "--extractor-args", "youtube:player_client=android_music;consent=1",
+                "--add-header", "Cookie: " + YT_CONSENT_COOKIE,
                 "-o", dir.resolve(videoId + ".%(ext)s").toString(),
                 videoUrl
             }
@@ -575,6 +700,7 @@ public class YouTubeService {
             .uri(URI.create(apiUrl))
             .header("x-rapidapi-host", rapidApiHost)
             .header("x-rapidapi-key", rapidApiKey)
+            .header("Accept", "application/json")
             .timeout(java.time.Duration.ofSeconds(30))
             .GET()
             .build();
@@ -635,11 +761,14 @@ public class YouTubeService {
         Path dir = Paths.get(tempDir);
         Files.createDirectories(dir);
 
+        // Order matters: try the least restricted clients first
+        // ANDROID_MUSIC and ANDROID often bypass bot detection on datacenter IPs
         String[][] clients = {
+            {"ANDROID_MUSIC", "6.42.51", "34"},
+            {"ANDROID", "19.43.38", "34"},
             {"WEB_EMBEDDED_PLAYER", "1.0", ""},
-            {"ANDROID_MUSIC", "6.27.51", "30"},
-            {"ANDROID", "19.09.37", "30"},
-            {"WEB", "2.20240201.08.00", ""}
+            {"IOS", "19.43.38", ""},
+            {"WEB", "2.20250212.00.00", ""}
         };
 
         IOException lastError = new IOException("All Innertube clients exhausted");
@@ -664,38 +793,47 @@ public class YouTubeService {
         body.append("\"clientName\":\"").append(clientName).append("\",");
         body.append("\"clientVersion\":\"").append(clientVersion).append("\"");
         if (!sdkVersion.isEmpty()) {
-            body.append(",\"androidSdkVersion\":").append(sdkVersion);
+            body.append(",\"androidSdkVersion\":\"").append(sdkVersion).append("\"");
         }
         body.append(",\"hl\":\"en\",\"gl\":\"US\"");
         body.append("}},\"videoId\":\"").append(escapeJson(videoId)).append("\"}");
 
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create("https://www.youtube.com/youtubei/v1/player?key=" + INNERTUBE_KEY))
-            .header("Content-Type", "application/json")
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            .header("Accept", "*/*")
-            .header("Origin", "https://www.youtube.com")
-            .header("Referer", "https://www.youtube.com")
-            .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-            .build();
+        // Try with API key first, then without (some clients work better without it)
+        IOException lastError = null;
+        String[] keys = {INNERTUBE_KEY, ""};
+        for (String key : keys) {
+            try {
+                String url = "https://www.youtube.com/youtubei/v1/player" + (key.isEmpty() ? "" : "?key=" + key);
+                HttpRequest request = ytApiRequest(url)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                    .build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-        if (response.statusCode() != 200) {
-            throw new IOException("Innertube status " + response.statusCode() + " for " + clientName);
-        }
+                if (response.statusCode() != 200) {
+                    throw new IOException("Innertube status " + response.statusCode() + " for " + clientName + " key=" + (key.isEmpty() ? "none" : "default"));
+                }
 
-        Map<String, Object> root = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
-        Map<String, Object> playability = (Map<String, Object>) root.get("playabilityStatus");
-        if (playability != null) {
-            String pStatus = (String) playability.get("status");
-            if (!"OK".equals(pStatus)) {
-                String reason = (String) playability.get("reason");
-                throw new IOException(clientName + ": " + (reason != null ? reason : pStatus));
+                Map<String, Object> root = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+                Map<String, Object> playability = (Map<String, Object>) root.get("playabilityStatus");
+                if (playability != null) {
+                    String pStatus = (String) playability.get("status");
+                    if (!"OK".equals(pStatus)) {
+                        String reason = (String) playability.get("reason");
+                        throw new IOException(clientName + ": " + (reason != null ? reason : pStatus));
+                    }
+                }
+
+                Map<String, Object> streamingData = (Map<String, Object>) root.get("streamingData");
+                if (streamingData != null) return streamingData;
+                throw new IOException(clientName + ": no streamingData in response");
+            } catch (IOException e) {
+                lastError = e;
+                log.warn("Innertube key={} for {} failed: {}", key.isEmpty() ? "none" : "default", clientName, e.getMessage());
             }
         }
-
-        return (Map<String, Object>) root.get("streamingData");
+        throw lastError != null ? lastError : new IOException("All Innertube key variants failed for " + clientName);
     }
 
     @SuppressWarnings("unchecked")
@@ -705,12 +843,30 @@ public class YouTubeService {
         List<Map<String, Object>> regular = (List<Map<String, Object>>) streamingData.get("formats");
         if (regular == null) regular = new ArrayList<>();
 
+        // Helper to extract URL from format, handling signatureCipher/cipher
+        java.util.function.Function<Map<String, Object>, String> extractUrl = (fmt) -> {
+            String url = (String) fmt.get("url");
+            if (url != null && !url.isBlank()) return url;
+            String cipher = (String) fmt.get("signatureCipher");
+            if (cipher == null) cipher = (String) fmt.get("cipher");
+            if (cipher != null && !cipher.isBlank()) {
+                Map<String, String> params = parseQueryString(cipher);
+                url = params.get("url");
+                String s = params.get("s");
+                String sp = params.get("sp");
+                if (url != null && s != null && sp != null) {
+                    url = url + "&" + sp + "=" + s;
+                }
+            }
+            return url;
+        };
+
         Map<String, Object> bestFormat = null;
 
-        // First pass: audio-only with direct URLs
+        // First pass: audio-only with direct or signed URLs
         for (Map<String, Object> fmt : adaptive) {
             String mime = (String) fmt.get("mimeType");
-            String url = (String) fmt.get("url");
+            String url = extractUrl.apply(fmt);
             if (mime != null && mime.startsWith("audio") && url != null && !url.isBlank()) {
                 if (bestFormat == null) bestFormat = fmt;
                 else {
@@ -721,10 +877,10 @@ public class YouTubeService {
             }
         }
 
-        // Second pass: regular formats
+        // Second pass: regular formats (also try signatureCipher)
         if (bestFormat == null) {
             for (Map<String, Object> fmt : regular) {
-                String url = (String) fmt.get("url");
+                String url = extractUrl.apply(fmt);
                 if (url != null && !url.isBlank()) {
                     bestFormat = fmt;
                     break;
@@ -736,7 +892,7 @@ public class YouTubeService {
             throw new IOException("No usable audio format in streaming data");
         }
 
-        String audioUrl = (String) bestFormat.get("url");
+        String audioUrl = extractUrl.apply(bestFormat);
         if (audioUrl == null || audioUrl.isBlank()) {
             throw new IOException("Audio URL is empty");
         }

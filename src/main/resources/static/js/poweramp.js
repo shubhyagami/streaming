@@ -696,13 +696,16 @@ function searchYouTube() {
     document.getElementById('search-status').innerHTML = '<span class="status-msg">Searching YouTube...</span>';
     document.getElementById('search-results').innerHTML = '';
     fetch('/api/yt/search?q=' + encodeURIComponent(q))
-        .then(r => { if (!r.ok) throw new Error('Search failed'); return r.json(); })
+        .then(async r => {
+            if (!r.ok) { const body = await r.text().catch(() => '{}'); let msg = 'Search failed'; try { const j = JSON.parse(body); msg = j.message || j.error || msg; } catch(e){} throw new Error(msg); }
+            return r.json();
+        })
         .then(data => {
             document.getElementById('search-status').innerHTML = '';
             if (!data || data.length === 0) { document.getElementById('search-status').innerHTML = '<span class="status-msg">No results found</span>'; return; }
             renderYTResults(data);
         })
-        .catch(err => { document.getElementById('search-status').innerHTML = '<span class="status-msg error">Error: ' + err.message + '</span>'; });
+        .catch(err => { document.getElementById('search-status').innerHTML = '<span class="status-msg error">' + err.message + '</span>'; });
 }
 
 function searchSpotify() {
