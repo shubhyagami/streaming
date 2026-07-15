@@ -810,6 +810,27 @@ function startPolling(token, title, thumbnail) {
     }, 2000);
 }
 
+function fetchVideoDetails(videoId) {
+    fetch('/api/yt/details?videoId=' + encodeURIComponent(videoId))
+        .then(r => { if (!r.ok) throw new Error('Details failed'); return r.json(); })
+        .then(d => {
+            const el = document.getElementById('video-details');
+            document.getElementById('details-thumb').src = d.thumbnail || 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg';
+            document.getElementById('details-title').textContent = d.title || '';
+            document.getElementById('details-channel').textContent = d.channel || '';
+            const pub = d.publishedDate || d.publishedDateTime || '';
+            document.getElementById('details-published').textContent = pub ? 'Published ' + pub : '';
+            document.getElementById('details-views').textContent = d.views ? formatNumber(d.views) + ' views' : '0 views';
+            document.getElementById('details-likes').textContent = d.likes ? formatNumber(d.likes) : '0';
+            document.getElementById('details-comments').textContent = d.comments ? formatNumber(d.comments) : '0';
+            document.getElementById('details-duration').textContent = d.duration ? formatDuration(d.duration) : '0:00';
+            document.getElementById('details-description').textContent = d.description || '';
+            el.classList.remove('hidden');
+            showSection('dashboard');
+        })
+        .catch(() => {});
+}
+
 function playVideo(videoId, title, thumbnail) {
     currentThumbnail = thumbnail || null;
     const spinner = document.getElementById('loading-spinner');
@@ -824,6 +845,8 @@ function playVideo(videoId, title, thumbnail) {
             }
         })
         .catch(err => { spinner.classList.add('hidden'); document.getElementById('search-status').innerHTML = '<span class="status-msg error">' + err.message + '</span>'; });
+
+    fetchVideoDetails(videoId);
 }
 
 function playSpotify(audioUrl, videoId, title) {
@@ -1042,6 +1065,14 @@ function stopPlayback() {
 }
 
 function setStatus(msg) { const el = document.getElementById('status-text'); if (el) el.textContent = msg; }
+
+function formatNumber(n) {
+    if (!n) return '0';
+    if (n >= 1000000000) return (n / 1000000000).toFixed(1) + 'B';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return n.toString();
+}
 
 function formatDuration(seconds) {
     if (!seconds || seconds <= 0) return '--:--';

@@ -69,6 +69,71 @@ public class YouTubeService {
 
     public record SearchResult(String videoId, String title, String channel, long duration, String thumbnail) {}
 
+    public record VideoDetails(
+        String videoId, String title, String channel, String channelId, String description,
+        long views, long likes, long comments, long duration,
+        String publishedDate, String publishedDateTime, boolean isLive,
+        String thumbnail
+    ) {}
+
+    // ===== Video Details =====
+
+    @SuppressWarnings("unchecked")
+    public VideoDetails getVideoDetails(String videoId) throws IOException, InterruptedException {
+        String apiUrl = "https://" + rapidApiHost + "/video/details/?id=" + videoId + "&hl=en&gl=US";
+        log.info("Fetching video details from RapidAPI: {}", apiUrl);
+
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(apiUrl))
+            .header("x-rapidapi-host", rapidApiHost)
+            .header("x-rapidapi-key", rapidApiKey)
+            .header("Accept", "application/json")
+            .timeout(java.time.Duration.ofSeconds(15))
+            .GET()
+            .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) {
+            throw new IOException("Video details API returned status " + response.statusCode());
+        }
+
+        Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+
+        String title = (String) json.get("title");
+        String desc = (String) json.get("description");
+        Number len = (Number) json.get("lengthSeconds");
+        boolean isLive = Boolean.TRUE.equals(json.get("isLiveNow"));
+
+        String publishedDate = (String) json.get("publishedDate");
+        String publishedDateTime = (String) json.get("publishedDateTime");
+
+        String channel = "";
+        String channelId = "";
+        Object authorObj = json.get("author");
+        if (authorObj instanceof Map) {
+            Map<String, Object> author = (Map<String, Object>) authorObj;
+            channel = (String) author.get("title");
+            channelId = (String) author.get("channelId");
+        }
+
+        long views = 0, likes = 0, comments = 0;
+        Object statsObj = json.get("stats");
+        if (statsObj instanceof Map) {
+            Map<String, Object> stats = (Map<String, Object>) statsObj;
+            if (stats.get("views") instanceof Number) views = ((Number) stats.get("views")).longValue();
+            if (stats.get("likes") instanceof Number) likes = ((Number) stats.get("likes")).longValue();
+            if (stats.get("comments") instanceof Number) comments = ((Number) stats.get("comments")).longValue();
+        }
+
+        String thumbnail = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+
+        return new VideoDetails(videoId, title != null ? title : "", channel, channelId,
+            desc != null ? desc : "", views, likes, comments,
+            len != null ? len.longValue() : 0,
+            publishedDate, publishedDateTime, isLive, thumbnail);
+    }
+
     // ===== Search =====
 
     public List<SearchResult> search(String query, int limit) throws IOException, InterruptedException {

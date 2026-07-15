@@ -41,6 +41,11 @@ public class StreamController {
         return ytService.search(q, 10);
     }
 
+    @GetMapping("/api/yt/details")
+    public YouTubeService.VideoDetails getVideoDetails(@RequestParam String videoId) throws Exception {
+        return ytService.getVideoDetails(videoId);
+    }
+
     @PostMapping("/api/yt/stream")
     public ResponseEntity<Map<String, String>> startStream(
             @RequestParam String videoId,
