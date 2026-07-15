@@ -56,13 +56,8 @@ public class StreamController {
         // 1. Register a download session immediately and return
         String token = tempFileManager.register(title);
 
-        // 2. Fetch direct stream URL in background (Piped then media downloader)
-        CompletableFuture.supplyAsync(() -> {
-            // Try Piped first (fastest, ~2s)
-            try { return ytService.getPipedStreamUrl(videoId); } catch (Exception e) {}
-            // Fall back to media downloader API
-            return ytService.getDirectStreamUrl(videoId);
-        }).thenAccept(url -> {
+        // 2. Fetch direct stream URL in background (media downloader API)
+        CompletableFuture.supplyAsync(() -> ytService.getFastStreamUrl(videoId)).thenAccept(url -> {
             if (url != null) {
                 tempFileManager.setDirectUrl(token, url);
                 log.info("Direct stream URL ready for {} token={}", videoId, token);
