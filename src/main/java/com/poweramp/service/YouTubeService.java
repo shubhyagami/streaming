@@ -47,9 +47,6 @@ public class YouTubeService {
     @Value("${poweramp.rapidapi.download-host:youtube-mp36.p.rapidapi.com}")
     private String rapidApiDownloadHost;
 
-    @Value("${poweramp.rapidapi.media-downloader-host:youtube-media-downloader.p.rapidapi.com}")
-    private String rapidApiMediaDownloaderHost;
-
     @Value("${poweramp.rapidapi.key:e9f2c625ebmsh6cd2de7109f2f5ep1f9991jsn4f3b636412b2}")
     private String rapidApiKey;
 
@@ -65,8 +62,6 @@ public class YouTubeService {
     // ===== Video Details & Direct Stream URL =====
 
     public String getFastStreamUrl(String videoId) {
-        String url = getDirectStreamUrl(videoId);
-        if (url != null) return url;
         return getRapidApiStreamUrl(videoId);
     }
 
@@ -85,48 +80,6 @@ public class YouTubeService {
             return link != null && !link.isBlank() ? link : null;
         } catch (Exception e) {
             log.warn("getRapidApiStreamUrl failed for {}: {}", videoId, e.getMessage());
-            return null;
-        }
-    }
-
-    // Quickly get a direct YouTube audio stream URL (uses media downloader API, ~3-5s)
-    public String getDirectStreamUrl(String videoId) {
-        try {
-            String apiUrl = "https://" + rapidApiMediaDownloaderHost + "/v2/video/details?videoId=" + videoId;
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(apiUrl))
-                .header("x-rapidapi-host", rapidApiMediaDownloaderHost)
-                .header("x-rapidapi-key", rapidApiKey)
-                .header("Accept", "application/json")
-                .timeout(java.time.Duration.ofSeconds(10))
-                .GET()
-                .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) return null;
-
-            Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
-            Map<String, Object> audiosObj = (Map<String, Object>) json.get("audios");
-            if (audiosObj == null) return null;
-            List<Map<String, Object>> audios = (List<Map<String, Object>>) audiosObj.get("items");
-            if (audios == null || audios.isEmpty()) return null;
-
-            // Pick best audio (prefer m4a, largest size)
-            Map<String, Object> best = null;
-            long bestSize = 0;
-            for (Map<String, Object> a : audios) {
-                String mime = (String) a.get("mimeType");
-                Number s = (Number) a.get("size");
-                long sz = s != null ? s.longValue() : 0;
-                if (mime != null && mime.contains("audio/mp4") && sz > bestSize) {
-                    best = a; bestSize = sz;
-                }
-                if (best == null && sz > bestSize) { best = a; bestSize = sz; }
-            }
-            if (best == null) return null;
-            return (String) best.get("url");
-        } catch (Exception e) {
-            log.warn("getDirectStreamUrl failed for {}: {}", videoId, e.getMessage());
             return null;
         }
     }
@@ -445,137 +398,20 @@ public class YouTubeService {
 
 
     // ===================================================================
-    // Download Pipeline — tries each method in order until one succeeds:
-    //   1. YouTube Media DL     (RapidAPI, returns direct YouTube audio stream URLs)
-    //   2. RapidAPI (mp36)      (3rd party, converts to MP3 server-side)
+    // Download Pipeline — only RapidAPI mp36
     // ===================================================================
 
     public Path downloadAudio(String videoId) throws IOException, InterruptedException {
-        List<String> errors = new ArrayList<>();
-
-        // 1. YouTube Media Downloader — RapidAPI that returns direct YouTube audio stream URLs
-        try {
-            Path result = downloadWithMediaDownloader(videoId);
-            if (result != null) {
-                log.info("✓ Downloaded via YouTube Media Downloader: {}", videoId);
-                return result;
-            }
-        } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
-            errors.add("MediaDL: " + msg);
-            log.warn("YouTube Media Downloader failed for {}: {}", videoId, msg);
-        }
-
-        // 2. RapidAPI (mp36) — converts to MP3 server-side
         try {
             Path result = downloadWithRapidApi(videoId);
             log.info("✓ Downloaded via RapidAPI: {}", videoId);
             return result;
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
-            errors.add("RapidAPI: " + msg);
-            log.warn("RapidAPI failed for {}: {}", videoId, msg);
+            log.error("RapidAPI download failed for {}: {}", videoId, msg);
+            throw new IOException("Could not download audio. RapidAPI: " + msg);
         }
-
-        String allErrors = String.join(" | ", errors);
-        log.error("All download methods failed for {}: {}", videoId, allErrors);
-        throw new IOException("Could not download audio. Tried 2 methods, both failed. Details: " + allErrors);
     }
-
-    // ===== Method 1: YouTube Media Downloader (RapidAPI) =====
-    // Uses youtube-media-downloader.p.rapidapi.com to get direct YouTube audio stream URLs.
-    // The /v2/video/details endpoint returns audios[] with direct streaming URLs.
-
-    @SuppressWarnings("unchecked")
-    private Path downloadWithMediaDownloader(String videoId) throws IOException, InterruptedException {
-        Path dir = Paths.get(songsDir);
-        Files.createDirectories(dir);
-
-        String apiUrl = "https://" + rapidApiMediaDownloaderHost + "/v2/video/details?videoId=" + videoId;
-        log.info("YouTube Media Downloader request: {}", apiUrl);
-
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(apiUrl))
-            .header("x-rapidapi-host", rapidApiMediaDownloaderHost)
-            .header("x-rapidapi-key", rapidApiKey)
-            .header("Accept", "application/json")
-            .timeout(java.time.Duration.ofSeconds(20))
-            .GET()
-            .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-        if (response.statusCode() != 200) return null;
-
-        Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
-
-        // Extract audios array
-        Map<String, Object> audiosObj = (Map<String, Object>) json.get("audios");
-        if (audiosObj == null) return null;
-        List<Map<String, Object>> audios = (List<Map<String, Object>>) audiosObj.get("items");
-        if (audios == null || audios.isEmpty()) return null;
-
-        // Pick the best audio stream (largest size, prefer mp4a/m4a for better compatibility)
-        Map<String, Object> bestAudio = null;
-        long bestSize = 0;
-        for (Map<String, Object> audio : audios) {
-            String mime = (String) audio.get("mimeType");
-            Number sizeNum = (Number) audio.get("size");
-            long size = sizeNum != null ? sizeNum.longValue() : 0;
-            if (mime != null && mime.contains("audio/mp4")) {
-                // Prefer m4a/mp4a codec for browser compatibility
-                if (bestAudio == null || size > bestSize) {
-                    bestAudio = audio;
-                    bestSize = size;
-                }
-            }
-            if (bestAudio == null && size > bestSize) {
-                bestAudio = audio;
-                bestSize = size;
-            }
-        }
-        if (bestAudio == null) return null;
-
-        String downloadUrl = (String) bestAudio.get("url");
-        if (downloadUrl == null || downloadUrl.isBlank()) return null;
-
-        String ext = (String) bestAudio.get("extension");
-        if (ext == null || ext.isBlank()) ext = "m4a";
-        if ("weba".equals(ext)) ext = "webm";
-
-        Path outputPath = dir.resolve(videoId + "." + ext);
-        log.info("Downloading from YouTube Media Downloader: {} ({} bytes, {})",
-            bestAudio.get("mimeType"), bestSize, downloadUrl);
-
-        HttpRequest downloadRequest = HttpRequest.newBuilder()
-            .uri(URI.create(downloadUrl))
-            .header("User-Agent", YT_USER_AGENT)
-            .timeout(java.time.Duration.ofMinutes(3))
-            .GET()
-            .build();
-
-        HttpResponse<InputStream> downloadResponse = httpClient.send(downloadRequest,
-            HttpResponse.BodyHandlers.ofInputStream());
-
-        if (downloadResponse.statusCode() != 200) {
-            throw new IOException("Media downloader: stream returned status " + downloadResponse.statusCode());
-        }
-
-        try (InputStream in = downloadResponse.body()) {
-            Files.copy(in, outputPath, StandardCopyOption.REPLACE_EXISTING);
-        }
-
-        long fileSize = Files.size(outputPath);
-        if (fileSize < 10000) {
-            Files.deleteIfExists(outputPath);
-            throw new IOException("Media downloader: downloaded file too small (" + fileSize + " bytes)");
-        }
-
-        log.info("YouTube Media Downloader saved: {} ({} bytes)", outputPath.getFileName(), fileSize);
-        return outputPath;
-    }
-
-    // ===== Method 3: RapidAPI =====
 
     private Path downloadWithRapidApi(String videoId) throws IOException, InterruptedException {
         Path dir = Paths.get(songsDir);

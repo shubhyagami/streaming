@@ -39,7 +39,6 @@ poweramp:
   rapidapi:
     host: youtube138.p.rapidapi.com
     download-host: youtube-mp36.p.rapidapi.com
-    media-downloader-host: youtube-media-downloader.p.rapidapi.com
     spotify-host: spotify81.p.rapidapi.com
     key: e9f2c625ebmsh6cd2de7109f2f5ep1f9991jsn4f3b636412b2
   defaults:
