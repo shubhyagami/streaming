@@ -52,8 +52,11 @@ public class YouTubeService {
     @Value("${poweramp.temp-dir:#{systemProperties['java.io.tmpdir']}/poweramp-stream}")
     private String tempDir;
 
-    @Value("${poweramp.rapidapi.host:youtube-mp36.p.rapidapi.com}")
+    @Value("${poweramp.rapidapi.host:youtube138.p.rapidapi.com}")
     private String rapidApiHost;
+
+    @Value("${poweramp.rapidapi.download-host:youtube-mp36.p.rapidapi.com}")
+    private String rapidApiDownloadHost;
 
     @Value("${poweramp.rapidapi.key:e9f2c625ebmsh6cd2de7109f2f5ep1f9991jsn4f3b636412b2}")
     private String rapidApiKey;
@@ -80,7 +83,16 @@ public class YouTubeService {
             log.warn("YouTube scrape search failed: {}", e.getMessage());
         }
 
-        // Method 2: Piped API fallback
+        // Method 2: RapidAPI (youtube138) fallback
+        try {
+            List<SearchResult> results = searchWithRapidApi(query, limit);
+            if (results != null && !results.isEmpty()) return results;
+        } catch (Exception e) {
+            errors.add("RapidAPI: " + (e.getMessage() != null ? e.getMessage() : "unknown"));
+            log.warn("RapidAPI search failed: {}", e.getMessage());
+        }
+
+        // Method 3: Piped API fallback
         try {
             List<SearchResult> results = searchWithPipedApi(query, limit);
             if (results != null && !results.isEmpty()) return results;
@@ -211,6 +223,62 @@ public class YouTubeService {
                     i < titles.size() ? titles.get(i) : "Unknown", "",
                     0, "https://i.ytimg.com/vi/" + ids.get(i) + "/hqdefault.jpg"));
             }
+        }
+
+        return results;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<SearchResult> searchWithRapidApi(String query, int limit) throws IOException, InterruptedException {
+        List<SearchResult> results = new ArrayList<>();
+
+        String apiUrl = "https://" + rapidApiHost + "/search/?q="
+            + java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8)
+            + "&hl=en&gl=US";
+        log.info("RapidAPI search: {}", apiUrl);
+
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(apiUrl))
+            .header("x-rapidapi-host", rapidApiHost)
+            .header("x-rapidapi-key", rapidApiKey)
+            .header("Accept", "application/json")
+            .header("User-Agent", YT_USER_AGENT)
+            .timeout(java.time.Duration.ofSeconds(15))
+            .GET()
+            .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) return results;
+
+        Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+        List<Map<String, Object>> contents = (List<Map<String, Object>>) json.get("contents");
+        if (contents == null || contents.isEmpty()) return results;
+
+        for (Map<String, Object> item : contents) {
+            Map<String, Object> video = (Map<String, Object>) item.get("video");
+            if (video == null) continue;
+
+            String videoId = (String) video.get("videoId");
+            if (videoId == null) continue;
+
+            String title = (String) video.get("title");
+            String channel = "";
+            Object authorObj = video.get("author");
+            if (authorObj instanceof Map) {
+                channel = (String) ((Map<String, Object>) authorObj).get("title");
+            }
+
+            long duration = 0;
+            Object lenObj = video.get("lengthSeconds");
+            if (lenObj instanceof Number) duration = ((Number) lenObj).longValue();
+
+            String thumbnail = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
+
+            results.add(new SearchResult(videoId, title != null ? title : "",
+                channel != null ? channel : "", duration, thumbnail));
+
+            if (results.size() >= limit) break;
         }
 
         return results;
@@ -755,12 +823,12 @@ public class YouTubeService {
         Path dir = Paths.get(tempDir);
         Files.createDirectories(dir);
 
-        String apiUrl = "https://" + rapidApiHost + "/dl?id=" + videoId;
-        log.info("RapidAPI request: {}", apiUrl);
+        String apiUrl = "https://" + rapidApiDownloadHost + "/dl?id=" + videoId;
+        log.info("RapidAPI download request: {}", apiUrl);
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(apiUrl))
-            .header("x-rapidapi-host", rapidApiHost)
+            .header("x-rapidapi-host", rapidApiDownloadHost)
             .header("x-rapidapi-key", rapidApiKey)
             .header("Accept", "application/json")
             .timeout(java.time.Duration.ofSeconds(30))
