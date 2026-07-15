@@ -248,6 +248,9 @@ public class YouTubeService {
                                                 }
                                             } catch (Exception ignored) {}
 
+                                            // Skip shorts (< 60 seconds)
+                                            if (duration > 0 && duration < 60) continue;
+
                                             String thumb = (String) video.get("thumbnail");
                                             if (thumb == null || thumb.isBlank()) thumb = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
 
@@ -324,11 +327,21 @@ public class YouTubeService {
         if (contents == null || contents.isEmpty()) return results;
 
         for (Map<String, Object> item : contents) {
+            // Skip non-video items (shorts, playlists, channels, etc.)
+            String type = (String) item.get("type");
+            if (!"video".equals(type)) continue;
+
             Map<String, Object> video = (Map<String, Object>) item.get("video");
             if (video == null) continue;
 
             String videoId = (String) video.get("videoId");
             if (videoId == null) continue;
+
+            // Skip shorts (typically < 60 seconds)
+            Object lenObj = video.get("lengthSeconds");
+            long duration = 0;
+            if (lenObj instanceof Number) duration = ((Number) lenObj).longValue();
+            if (duration > 0 && duration < 60) continue;
 
             String title = (String) video.get("title");
             String channel = "";
@@ -336,10 +349,6 @@ public class YouTubeService {
             if (authorObj instanceof Map) {
                 channel = (String) ((Map<String, Object>) authorObj).get("title");
             }
-
-            long duration = 0;
-            Object lenObj = video.get("lengthSeconds");
-            if (lenObj instanceof Number) duration = ((Number) lenObj).longValue();
 
             String thumbnail = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
 
