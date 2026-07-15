@@ -468,7 +468,7 @@ public class YouTubeService {
                     .uri(URI.create(apiUrl))
                     .header("Accept", "application/json")
                     .header("User-Agent", "Mozilla/5.0")
-                    .timeout(java.time.Duration.ofSeconds(12))
+                    .timeout(java.time.Duration.ofSeconds(5))
                     .GET()
                     .build();
 
@@ -539,7 +539,7 @@ public class YouTubeService {
                 HttpRequest dlRequest = HttpRequest.newBuilder()
                     .uri(URI.create(streamUrl))
                     .header("User-Agent", "Mozilla/5.0")
-                    .timeout(java.time.Duration.ofMinutes(3))
+                    .timeout(java.time.Duration.ofSeconds(30))
                     .GET()
                     .build();
 
@@ -577,7 +577,7 @@ public class YouTubeService {
         for (String p : paths) {
             try {
                 Process check = new ProcessBuilder(p, "--version").start();
-                if (check.waitFor(30, TimeUnit.SECONDS) && check.exitValue() == 0) {
+                if (check.waitFor(5, TimeUnit.SECONDS) && check.exitValue() == 0) {
                     try (BufferedReader r = new BufferedReader(new InputStreamReader(check.getInputStream()))) {
                         String version = r.readLine();
                         log.info("Found yt-dlp at {} (version {})", p, version);
