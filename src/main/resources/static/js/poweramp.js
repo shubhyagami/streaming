@@ -620,6 +620,7 @@ function switchSource(source) {
 // ===== YouTube/Spotify Search & Playback =====
 let currentToken = null;
 let currentVideoId = null;
+let currentVideoStats = null;
 const PLAYER_STORAGE_KEY = 'powerampPlayer';
 
 function savePlayerState() {
@@ -642,6 +643,7 @@ function restorePlayerState() {
         if (!state.token) { sessionStorage.removeItem(PLAYER_STORAGE_KEY); return; }
         currentToken = state.token; currentVideoId = state.videoId;
         currentThumbnail = state.thumbnail || null;
+        if (state.videoId) fetchVideoDetails(state.videoId);
         const np = document.getElementById('now-playing');
         np.classList.remove('hidden');
         document.getElementById('np-title').textContent = state.title;
@@ -814,6 +816,7 @@ function fetchVideoDetails(videoId) {
     fetch('/api/yt/details?videoId=' + encodeURIComponent(videoId))
         .then(r => { if (!r.ok) throw new Error('Details failed'); return r.json(); })
         .then(d => {
+            currentVideoStats = d;
             const el = document.getElementById('video-details');
             document.getElementById('details-thumb').src = d.thumbnail || 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg';
             document.getElementById('details-title').textContent = d.title || '';
@@ -827,6 +830,7 @@ function fetchVideoDetails(videoId) {
             document.getElementById('details-description').textContent = d.description || '';
             el.classList.remove('hidden');
             showSection('dashboard');
+            updateCassette();
         })
         .catch(() => {});
 }
@@ -881,6 +885,9 @@ function updateCassette() {
     const currentEl = document.getElementById('cassette-current');
     const durEl = document.getElementById('cassette-duration');
     const fillEl = document.getElementById('cassette-progress-fill');
+    const stats1 = document.getElementById('cassette-stats-line1');
+    const stats2 = document.getElementById('cassette-stats-line2');
+    const stats3 = document.getElementById('cassette-stats-line3');
 
     if (isPlaying) {
         reels.forEach(r => r.classList.add('spinning'));
@@ -900,6 +907,19 @@ function updateCassette() {
         if (currentEl) currentEl.textContent = formatTime(audio.currentTime);
         if (durEl) durEl.textContent = formatTime(audio.duration);
         if (fillEl) fillEl.style.width = ((audio.currentTime / audio.duration) * 100) + '%';
+        if (stats1 && currentVideoStats) {
+            const views = formatNumber(currentVideoStats.views);
+            const likes = formatNumber(currentVideoStats.likes);
+            const comments = formatNumber(currentVideoStats.comments);
+            stats1.textContent = views + ' views  |  ' + likes + ' likes  |  ' + comments + ' comments';
+        }
+        if (stats2 && currentVideoStats) {
+            const pub = currentVideoStats.publishedDate || currentVideoStats.publishedDateTime || '';
+            stats2.textContent = currentVideoStats.channel + (pub ? '  |  Published ' + pub : '');
+        }
+        if (stats3 && currentVideoStats) {
+            stats3.textContent = currentVideoStats.title.substring(0, 60);
+        }
     } else {
         reels.forEach(r => r.classList.remove('spinning'));
         if (titleEl) {
@@ -910,6 +930,9 @@ function updateCassette() {
         if (currentEl) currentEl.textContent = '0:00';
         if (durEl) durEl.textContent = '0:00';
         if (fillEl) fillEl.style.width = '0%';
+        if (stats1) stats1.textContent = '';
+        if (stats2) stats2.textContent = '';
+        if (stats3) stats3.textContent = '';
     }
 }
 
@@ -1055,6 +1078,7 @@ function stopPlayback() {
     if (currentToken) { fetch('/api/yt/stop/' + currentToken, { method: 'POST' }).catch(function(){}); currentToken = null; }
     currentVideoId = null;
     currentThumbnail = null;
+    currentVideoStats = null;
     if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
     clearPlayerState();
     setStatus('Ready');
