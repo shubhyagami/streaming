@@ -130,7 +130,8 @@ public class StreamController {
     // ===== Direct stream proxy (immediate playback from YouTube CDN) =====
 
     @GetMapping("/api/yt/direct/{token}")
-    public void directStream(@PathVariable String token, HttpServletResponse response) throws Exception {
+    public void directStream(@PathVariable String token, HttpServletResponse response,
+                             @RequestHeader(value = "Range", required = false) String rangeHeader) throws Exception {
         TempFileManager.TempEntry entry = tempFileManager.get(token);
         if (entry == null || entry.directUrl() == null) {
             response.sendError(404);
@@ -144,10 +145,13 @@ public class StreamController {
         var httpClient = java.net.http.HttpClient.newBuilder()
             .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
             .build();
-        var proxyReq = java.net.http.HttpRequest.newBuilder()
+        var proxyReqBuilder = java.net.http.HttpRequest.newBuilder()
             .uri(URI.create(entry.directUrl()))
             .header("User-Agent", "Mozilla/5.0")
-            .GET()
+            .header("Referer", "https://www.youtube.com/");
+        // Forward Range header for seeking support
+        if (rangeHeader != null) proxyReqBuilder.header("Range", rangeHeader);
+        var proxyReq = proxyReqBuilder.GET()
             .build();
         var proxyRes = httpClient.send(proxyReq, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
 

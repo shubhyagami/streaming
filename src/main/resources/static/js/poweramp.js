@@ -770,10 +770,14 @@ function renderSpotifyResults(results) {
 
 let pollingInterval = null;
 
+let win95ProgressValue = 0;
+
 function startPolling(token, title, thumbnail) {
     const spinner = document.getElementById('loading-spinner');
     
     if (pollingInterval) clearInterval(pollingInterval);
+    win95ProgressValue = 0;
+    updateWin95Progress();
     
     pollingInterval = setInterval(() => {
         fetch('/api/yt/stream/' + token + '/status')
@@ -792,9 +796,11 @@ function startPolling(token, title, thumbnail) {
                         initToneWeb();
                         reconnectWebAudio();
                         initSpectrumAnalyzer();
-                    }).catch(function(){});
+                    }).catch(function(){
+                        // autoplay blocked by browser — will retry on READY
+                    });
                     showNowPlaying(title, thumbnail);
-                    setStatus('Playing: ' + title);
+                    setStatus('Loading stream...');
                     savePlayerState();
                     // Keep polling silently for file download completion
                     startPolling(token, title, thumbnail);
@@ -806,7 +812,7 @@ function startPolling(token, title, thumbnail) {
                     spinner.classList.add('hidden');
                     currentToken = token;
                     const audio = document.getElementById('audio-player');
-                    if (!audio.src) {
+                    if (audio.paused || audio.ended || !audio.src) {
                         audio.src = data.streamUrl;
                         audio.play().then(() => {
                             initWebAudio();
@@ -825,14 +831,35 @@ function startPolling(token, title, thumbnail) {
                     document.getElementById('search-status').innerHTML = '<span class="status-msg error">' + (data.error || 'Download failed') + '</span>';
                     setStatus('Download failed');
                 } else {
-                    // DOWNLOADING: keep polling
-                    setStatus('Downloading... (this may take up to 2 minutes)');
+                    // DOWNLOADING: animate Win95 progress bar
+                    updateWin95Progress();
                 }
             })
             .catch(err => {
                 // Ignore transient network errors during polling
             });
     }, 2000);
+}
+
+function updateWin95Progress() {
+    win95ProgressValue = Math.min(win95ProgressValue + Math.random() * 15 + 3, 92);
+    const fill = document.getElementById('win95-progress-fill');
+    const status = document.getElementById('win95-progress-status');
+    if (fill) fill.style.width = win95ProgressValue + '%';
+    const msgs = [
+        'Checking archive...', 'Decrypting key...', 'Downloading...', 'Please wait...',
+        'Copying files...', 'Processing stream...', 'Almost done...', 'Writing to disk...',
+        'Converting format...', 'Contacting peer...', 'Verifying integrity...',
+    ];
+    if (status) status.textContent = msgs[Math.floor(Math.random() * msgs.length)];
+}
+
+function resetWin95Progress() {
+    win95ProgressValue = 0;
+    const fill = document.getElementById('win95-progress-fill');
+    const status = document.getElementById('win95-progress-status');
+    if (fill) fill.style.width = '0%';
+    if (status) status.textContent = 'Contacting server...';
 }
 
 function fetchVideoDetails(videoId) {

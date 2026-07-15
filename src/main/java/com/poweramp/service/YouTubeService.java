@@ -65,9 +65,9 @@ public class YouTubeService {
     // ===== Video Details & Direct Stream URL =====
 
     public String getFastStreamUrl(String videoId) {
-        String url = getRapidApiStreamUrl(videoId);
+        String url = getDirectStreamUrl(videoId);
         if (url != null) return url;
-        return getDirectStreamUrl(videoId);
+        return getRapidApiStreamUrl(videoId);
     }
 
     public String getRapidApiStreamUrl(String videoId) {
