@@ -49,8 +49,8 @@ public class YouTubeService {
         "https://api.piped.yt"
     };
 
-    @Value("${poweramp.temp-dir:#{systemProperties['java.io.tmpdir']}/poweramp-stream}")
-    private String tempDir;
+    @Value("${poweramp.songs-dir:#{systemProperties['java.io.tmpdir']}/poweramp-songs}")
+    private String songsDir;
 
     @Value("${poweramp.rapidapi.host:youtube138.p.rapidapi.com}")
     private String rapidApiHost;
@@ -79,7 +79,84 @@ public class YouTubeService {
         String thumbnail
     ) {}
 
-    // ===== Video Details =====
+    // ===== Video Details & Direct Stream URL =====
+
+    // Get a stream URL via Piped API (fastest, ~2s)
+    public String getPipedStreamUrl(String videoId) throws IOException, InterruptedException {
+        for (String instance : PIPED_INSTANCES) {
+            try {
+                String apiUrl = instance + "/streams/" + videoId;
+                HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(apiUrl))
+                    .header("Accept", "application/json")
+                    .header("User-Agent", YT_USER_AGENT)
+                    .timeout(java.time.Duration.ofSeconds(5))
+                    .GET().build();
+                var res = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+                if (res.statusCode() != 200) continue;
+                Map<String, Object> json = mapper.readValue(res.body(), new TypeReference<Map<String, Object>>() {});
+                if (json.containsKey("error")) continue;
+                List<Map<String, Object>> streams = (List<Map<String, Object>>) json.get("audioStreams");
+                if (streams == null || streams.isEmpty()) continue;
+                Map<String, Object> best = null;
+                long bestBitrate = 0;
+                for (Map<String, Object> s : streams) {
+                    Number br = (Number) s.get("bitrate");
+                    long b = br != null ? br.longValue() : 0;
+                    if (b > bestBitrate) { best = s; bestBitrate = b; }
+                }
+                if (best != null) {
+                    String url = (String) best.get("url");
+                    if (url != null && !url.isBlank()) return url;
+                }
+            } catch (Exception e) {
+                log.warn("Piped stream URL failed for instance {}: {}", instance, e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    // Quickly get a direct YouTube audio stream URL (uses media downloader API, ~3-5s)
+    public String getDirectStreamUrl(String videoId) {
+        try {
+            String apiUrl = "https://" + rapidApiMediaDownloaderHost + "/v2/video/details?videoId=" + videoId;
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(apiUrl))
+                .header("x-rapidapi-host", rapidApiMediaDownloaderHost)
+                .header("x-rapidapi-key", rapidApiKey)
+                .header("Accept", "application/json")
+                .timeout(java.time.Duration.ofSeconds(10))
+                .GET()
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) return null;
+
+            Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> audiosObj = (Map<String, Object>) json.get("audios");
+            if (audiosObj == null) return null;
+            List<Map<String, Object>> audios = (List<Map<String, Object>>) audiosObj.get("items");
+            if (audios == null || audios.isEmpty()) return null;
+
+            // Pick best audio (prefer m4a, largest size)
+            Map<String, Object> best = null;
+            long bestSize = 0;
+            for (Map<String, Object> a : audios) {
+                String mime = (String) a.get("mimeType");
+                Number s = (Number) a.get("size");
+                long sz = s != null ? s.longValue() : 0;
+                if (mime != null && mime.contains("audio/mp4") && sz > bestSize) {
+                    best = a; bestSize = sz;
+                }
+                if (best == null && sz > bestSize) { best = a; bestSize = sz; }
+            }
+            if (best == null) return null;
+            return (String) best.get("url");
+        } catch (Exception e) {
+            log.warn("getDirectStreamUrl failed for {}: {}", videoId, e.getMessage());
+            return null;
+        }
+    }
 
     @SuppressWarnings("unchecked")
     public VideoDetails getVideoDetails(String videoId) throws IOException, InterruptedException {
@@ -193,7 +270,7 @@ public class YouTubeService {
     @SuppressWarnings("unchecked")
     private List<SearchResult> searchByScrapingYouTube(String query, int limit) throws IOException, InterruptedException {
         String encoded = java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8);
-        String url = "https://www.youtube.com/results?search_query=" + encoded;
+        String url = "https://www.youtube.com/results?search_query=" + encoded + "&hl=en&gl=US";
 
         HttpRequest req = HttpRequest.newBuilder()
             .uri(URI.create(url))
@@ -251,7 +328,7 @@ public class YouTubeService {
                                             // Skip shorts (< 60 seconds)
                                             if (duration > 0 && duration < 60) continue;
 
-                                            String thumb = (String) video.get("thumbnail");
+                                            String thumb = extractThumbnail(video);
                                             if (thumb == null || thumb.isBlank()) thumb = "https://i.ytimg.com/vi/" + videoId + "/hqdefault.jpg";
 
                                             results.add(new SearchResult(videoId, title != null ? title : "",
@@ -270,31 +347,7 @@ public class YouTubeService {
             }
         }
 
-        // If JSON parsing failed, try regex fallback
-        if (results.isEmpty()) {
-            java.util.regex.Pattern idPat = java.util.regex.Pattern.compile("\"videoId\":\"([^\"]+)\"");
-            java.util.regex.Matcher idMat = idPat.matcher(body);
-            List<String> ids = new ArrayList<>();
-            while (idMat.find()) {
-                String vid = idMat.group(1);
-                if (!ids.contains(vid)) ids.add(vid);
-                if (ids.size() >= limit) break;
-            }
-            java.util.regex.Pattern titlePat = java.util.regex.Pattern.compile("\"text\":\"([^\"]+?)\"");
-            java.util.regex.Matcher titleMat = titlePat.matcher(body);
-            List<String> titles = new ArrayList<>();
-            while (titleMat.find()) {
-                String t = titleMat.group(1);
-                if (!titles.contains(t)) titles.add(t);
-                if (titles.size() >= limit) break;
-            }
-            int maxResults = Math.min(limit, ids.size());
-            for (int i = 0; i < maxResults; i++) {
-                results.add(new SearchResult(ids.get(i),
-                    i < titles.size() ? titles.get(i) : "Unknown", "",
-                    0, "https://i.ytimg.com/vi/" + ids.get(i) + "/hqdefault.jpg"));
-            }
-        }
+        // If JSON parsing failed, return empty — the next method in the pipeline will handle it
 
         return results;
     }
@@ -613,7 +666,7 @@ public class YouTubeService {
 
     @SuppressWarnings("unchecked")
     private Path downloadWithPipedApi(String videoId) throws IOException, InterruptedException {
-        Path dir = Paths.get(tempDir);
+        Path dir = Paths.get(songsDir);
         Files.createDirectories(dir);
 
         IOException lastError = null;
@@ -751,7 +804,7 @@ public class YouTubeService {
     }
 
     private Path downloadWithYtDlp(String videoId) throws IOException, InterruptedException {
-        Path dir = Paths.get(tempDir);
+        Path dir = Paths.get(songsDir);
         Files.createDirectories(dir);
 
         String resolvedPath = resolveYtDlpPath();
@@ -914,7 +967,7 @@ public class YouTubeService {
 
     @SuppressWarnings("unchecked")
     private Path downloadWithMediaDownloader(String videoId) throws IOException, InterruptedException {
-        Path dir = Paths.get(tempDir);
+        Path dir = Paths.get(songsDir);
         Files.createDirectories(dir);
 
         String apiUrl = "https://" + rapidApiMediaDownloaderHost + "/v2/video/details?videoId=" + videoId;
@@ -1004,7 +1057,7 @@ public class YouTubeService {
     // ===== Method 3: RapidAPI =====
 
     private Path downloadWithRapidApi(String videoId) throws IOException, InterruptedException {
-        Path dir = Paths.get(tempDir);
+        Path dir = Paths.get(songsDir);
         Files.createDirectories(dir);
 
         String apiUrl = "https://" + rapidApiDownloadHost + "/dl?id=" + videoId;
@@ -1074,7 +1127,7 @@ public class YouTubeService {
 
     @SuppressWarnings("unchecked")
     private Path downloadFromYouTubeDirect(String videoId) throws IOException, InterruptedException {
-        Path dir = Paths.get(tempDir);
+        Path dir = Paths.get(songsDir);
         Files.createDirectories(dir);
 
         String pageUrl = "https://www.youtube.com/watch?v=" + videoId;
@@ -1179,7 +1232,7 @@ public class YouTubeService {
 
     @SuppressWarnings("unchecked")
     private Path downloadWithPlayerApi(String videoId) throws IOException, InterruptedException {
-        Path dir = Paths.get(tempDir);
+        Path dir = Paths.get(songsDir);
         Files.createDirectories(dir);
 
         // Order matters: try the least restricted clients first

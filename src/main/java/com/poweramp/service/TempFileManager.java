@@ -12,6 +12,9 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class TempFileManager {
@@ -20,6 +23,11 @@ public class TempFileManager {
     private static final long MAX_AGE_MS = 600_000; // 10 minutes
 
     private final Map<String, TempEntry> files = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "song-auto-delete");
+        t.setDaemon(true);
+        return t;
+    });
 
     public enum Status {
         DOWNLOADING,
@@ -29,6 +37,7 @@ public class TempFileManager {
 
     public static class TempEntry {
         private Path path; // Can be null while DOWNLOADING
+        private String directUrl; // Immediate playable URL from YouTube CDN
         private final Instant createdAt;
         private final String title;
         private Status status;
@@ -41,14 +50,21 @@ public class TempFileManager {
         }
 
         public Path path() { return path; }
+        public String directUrl() { return directUrl; }
         public Instant createdAt() { return createdAt; }
         public String title() { return title; }
         public Status status() { return status; }
         public String errorMessage() { return errorMessage; }
 
         public void setPath(Path path) { this.path = path; }
+        public void setDirectUrl(String directUrl) { this.directUrl = directUrl; }
         public void setStatus(Status status) { this.status = status; }
         public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+    }
+
+    public void setDirectUrl(String token, String directUrl) {
+        TempEntry entry = files.get(token);
+        if (entry != null) entry.setDirectUrl(directUrl);
     }
 
     // Initialize a new download session
@@ -78,6 +94,18 @@ public class TempFileManager {
 
     public TempEntry get(String token) {
         return files.get(token);
+    }
+
+    // Schedule auto-deletion after song duration completes (with buffer for seeking/replay)
+    public void scheduleDeleteAfter(String token, long durationSeconds) {
+        long delay = Math.max(durationSeconds + 30, 120); // duration + 30s buffer, min 2 min
+        scheduler.schedule(() -> {
+            TempEntry entry = files.get(token);
+            if (entry != null && entry.status() == Status.READY) {
+                log.info("Auto-deleting song after playback: {} ({})", entry.title(), token);
+                delete(token);
+            }
+        }, delay, TimeUnit.SECONDS);
     }
 
     public void delete(String token) {

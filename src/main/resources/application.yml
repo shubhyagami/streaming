@@ -35,7 +35,7 @@ poweramp:
     base-path: /music
   audio:
     temp-output: /tmp/poweramp-output
-  temp-dir: ${java.io.tmpdir}/poweramp-stream
+  songs-dir: ${user.home}/poweramp-songs
   rapidapi:
     host: youtube138.p.rapidapi.com
     download-host: youtube-mp36.p.rapidapi.com

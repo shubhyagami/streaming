@@ -779,19 +779,42 @@ function startPolling(token, title, thumbnail) {
         fetch('/api/yt/stream/' + token + '/status')
             .then(r => r.json())
             .then(data => {
-                if (data.status === 'READY') {
+                // Play immediately if direct URL is ready (before full download)
+                if (data.directUrl && !document.getElementById('audio-player').src) {
                     clearInterval(pollingInterval);
                     pollingInterval = null;
                     spinner.classList.add('hidden');
                     currentToken = token;
                     const audio = document.getElementById('audio-player');
-                    audio.src = data.streamUrl;
+                    audio.src = data.streamUrl || data.directUrl;
                     audio.play().then(() => {
                         initWebAudio();
                         initToneWeb();
                         reconnectWebAudio();
                         initSpectrumAnalyzer();
                     }).catch(function(){});
+                    showNowPlaying(title, thumbnail);
+                    setStatus('Playing: ' + title);
+                    savePlayerState();
+                    // Keep polling silently for file download completion
+                    startPolling(token, title, thumbnail);
+                    return;
+                }
+                if (data.status === 'READY') {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                    spinner.classList.add('hidden');
+                    currentToken = token;
+                    const audio = document.getElementById('audio-player');
+                    if (!audio.src) {
+                        audio.src = data.streamUrl;
+                        audio.play().then(() => {
+                            initWebAudio();
+                            initToneWeb();
+                            reconnectWebAudio();
+                            initSpectrumAnalyzer();
+                        }).catch(function(){});
+                    }
                     showNowPlaying(title, thumbnail);
                     setStatus('Playing: ' + title);
                     savePlayerState();
@@ -840,13 +863,11 @@ function playVideo(videoId, title, thumbnail) {
     const spinner = document.getElementById('loading-spinner');
     spinner.classList.remove('hidden');
     currentVideoId = videoId;
-    setStatus('Starting download...');
+    setStatus('Starting...');
     fetch('/api/yt/stream?videoId=' + encodeURIComponent(videoId) + '&title=' + encodeURIComponent(title), { method: 'POST' })
         .then(async r => { if (!r.ok && r.status !== 202) { const errBody = await r.json().catch(() => ({})); throw new Error(errBody.error || 'Download failed'); } return r.json(); })
         .then(data => {
-            if (data.status === 'DOWNLOADING' || data.status === 'READY') {
-                startPolling(data.token, title, currentThumbnail);
-            }
+            startPolling(data.token, title, currentThumbnail);
         })
         .catch(err => { spinner.classList.add('hidden'); document.getElementById('search-status').innerHTML = '<span class="status-msg error">' + err.message + '</span>'; });
 
@@ -899,7 +920,7 @@ function updateCassette() {
         if (imgEl) {
             if (currentThumbnail) {
                 imgEl.setAttributeNS('http://www.w3.org/1999/xlink', 'href', currentThumbnail);
-                imgEl.setAttribute('opacity', '1');
+                imgEl.setAttribute('opacity', '0.4');
             } else {
                 imgEl.setAttribute('opacity', '0');
             }

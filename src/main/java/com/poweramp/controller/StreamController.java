@@ -7,12 +7,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -51,27 +53,34 @@ public class StreamController {
             @RequestParam String videoId,
             @RequestParam(defaultValue = "Unknown") String title) {
 
-        // 1. Immediately register a download session
+        // 1. Register a download session immediately and return
         String token = tempFileManager.register(title);
 
-        // 2. Start download in the background
+        // 2. Fetch direct stream URL in background (Piped then media downloader)
         CompletableFuture.supplyAsync(() -> {
-            try {
-                return ytService.downloadAudio(videoId);
-            } catch (Exception e) {
-                throw new RuntimeException(e.getMessage(), e);
+            // Try Piped first (fastest, ~2s)
+            try { return ytService.getPipedStreamUrl(videoId); } catch (Exception e) {}
+            // Fall back to media downloader API
+            return ytService.getDirectStreamUrl(videoId);
+        }).thenAccept(url -> {
+            if (url != null) {
+                tempFileManager.setDirectUrl(token, url);
+                log.info("Direct stream URL ready for {} token={}", videoId, token);
             }
+        });
+
+        // 3. Start file download in background for persistence
+        CompletableFuture.supplyAsync(() -> {
+            try { return ytService.downloadAudio(videoId); } catch (Exception e) { throw new RuntimeException(e.getMessage(), e); }
         }).whenComplete((path, ex) -> {
             if (ex != null) {
-                String msg = extractRootCause(ex);
-                log.error("Download failed for videoId={}: {}", videoId, msg);
-                tempFileManager.markError(token, msg);
+                tempFileManager.markError(token, extractRootCause(ex));
             } else {
                 tempFileManager.markReady(token, path);
             }
         });
 
-        // 3. Return 202 Accepted immediately so the router doesn't timeout
+        // 4. Return immediately — client polls for status
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
             "token", token,
             "status", "DOWNLOADING"
@@ -123,6 +132,41 @@ public class StreamController {
         ));
     }
 
+    // ===== Direct stream proxy (immediate playback from YouTube CDN) =====
+
+    @GetMapping("/api/yt/direct/{token}")
+    public void directStream(@PathVariable String token, HttpServletResponse response) throws Exception {
+        TempFileManager.TempEntry entry = tempFileManager.get(token);
+        if (entry == null || entry.directUrl() == null) {
+            response.sendError(404);
+            return;
+        }
+
+        // Schedule auto-deletion
+        tempFileManager.scheduleDeleteAfter(token, 0);
+
+        // Proxy the YouTube CDN stream
+        var httpClient = java.net.http.HttpClient.newBuilder()
+            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+            .build();
+        var proxyReq = java.net.http.HttpRequest.newBuilder()
+            .uri(URI.create(entry.directUrl()))
+            .header("User-Agent", "Mozilla/5.0")
+            .GET()
+            .build();
+        var proxyRes = httpClient.send(proxyReq, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+
+        response.setStatus(proxyRes.statusCode());
+        proxyRes.headers().map().forEach((k, v) -> {
+            if (!"transfer-encoding".equalsIgnoreCase(k) && !"content-encoding".equalsIgnoreCase(k)) {
+                v.forEach(val -> response.setHeader(k, val));
+            }
+        });
+        try (var out = response.getOutputStream(); var in = proxyRes.body()) {
+            in.transferTo(out);
+        }
+    }
+
     // ===== Shared streaming (works for both YouTube and Spotify tokens) =====
 
     @GetMapping("/api/yt/stream/{token}")
@@ -137,6 +181,9 @@ public class StreamController {
             tempFileManager.delete(token);
             return ResponseEntity.notFound().build();
         }
+
+        // Schedule auto-deletion after song duration (with buffer)
+        tempFileManager.scheduleDeleteAfter(token, 0);
 
         String contentType = getContentType(path);
         Resource resource = new FileSystemResource(path.toFile());
@@ -163,10 +210,14 @@ public class StreamController {
         }
         
         if (entry.status() == TempFileManager.Status.DOWNLOADING) {
-            return ResponseEntity.ok(Map.of(
-                "status", "DOWNLOADING", 
-                "title", entry.title()
-            ));
+            Map<String, Object> body = new java.util.HashMap<>();
+            body.put("status", "DOWNLOADING");
+            body.put("title", entry.title());
+            if (entry.directUrl() != null) {
+                body.put("directUrl", entry.directUrl());
+                body.put("streamUrl", "/api/yt/direct/" + token);
+            }
+            return ResponseEntity.ok(body);
         } else if (entry.status() == TempFileManager.Status.ERROR) {
             return ResponseEntity.ok(Map.of(
                 "status", "ERROR", 

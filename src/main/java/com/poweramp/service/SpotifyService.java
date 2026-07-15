@@ -36,8 +36,8 @@ public class SpotifyService {
 
     private final YouTubeService ytService;
 
-    @Value("${poweramp.temp-dir:#{systemProperties['java.io.tmpdir']}/poweramp-stream}")
-    private String tempDir;
+    @Value("${poweramp.songs-dir:#{systemProperties['java.io.tmpdir']}/poweramp-songs}")
+    private String songsDir;
 
     @Value("${poweramp.rapidapi.spotify-host:spotify81.p.rapidapi.com}")
     private String rapidApiHost;
@@ -176,7 +176,7 @@ public class SpotifyService {
         if (downloadUrl == null || downloadUrl.isBlank()) return null;
 
         // Download the audio file
-        Path dir = Paths.get(tempDir);
+        Path dir = Paths.get(songsDir);
         Files.createDirectories(dir);
         Path outputPath = dir.resolve(videoId + ".mp3");
 
