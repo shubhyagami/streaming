@@ -42,7 +42,8 @@ public class TempFileManager {
     }
 
     public static class TempEntry {
-        private Path path; // Can be null while DOWNLOADING
+        private Path path; // Can be null if using directUrl
+        private String directUrl; // URL for frontend direct streaming
         private final Instant createdAt;
         private final String title;
         private Status status;
@@ -57,6 +58,7 @@ public class TempFileManager {
         }
 
         public Path path() { return path; }
+        public String directUrl() { return directUrl; }
         public Instant createdAt() { return createdAt; }
         public String title() { return title; }
         public Status status() { return status; }
@@ -64,6 +66,7 @@ public class TempFileManager {
         public boolean served() { return served; }
 
         public void setPath(Path path) { this.path = path; }
+        public void setDirectUrl(String directUrl) { this.directUrl = directUrl; }
         public void setStatus(Status status) { this.status = status; }
         public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
         public void setServed(boolean served) { this.served = served; }
@@ -107,10 +110,11 @@ public class TempFileManager {
     }
 
     // Mark as ready
-    public void markReady(String token, Path path) {
+    public void markReady(String token, Path path, String directUrl) {
         TempEntry entry = files.get(token);
         if (entry != null) {
             entry.setPath(path);
+            entry.setDirectUrl(directUrl);
             entry.setStatus(Status.READY);
         }
     }
