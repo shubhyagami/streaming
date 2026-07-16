@@ -369,8 +369,33 @@ public class YouTubeService {
 
 
 
+    // ===== Fast Stream URL via RapidAPI mp36 =====
+
+    public String getRapidApiStreamUrl(String videoId) {
+        try {
+            String apiUrl = "https://" + rapidApiDownloadHost + "/dl?id=" + videoId;
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(apiUrl))
+                .header("x-rapidapi-host", rapidApiDownloadHost)
+                .header("x-rapidapi-key", rapidApiKey)
+                .header("Accept", "application/json")
+                .timeout(java.time.Duration.ofSeconds(15))
+                .GET()
+                .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) return null;
+            Map<String, Object> map = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+            if (!"ok".equals(map.get("status"))) return null;
+            String link = (String) map.get("link");
+            return link != null && !link.isBlank() ? link : null;
+        } catch (Exception e) {
+            log.warn("getRapidApiStreamUrl failed for {}: {}", videoId, e.getMessage());
+            return null;
+        }
+    }
+
     // ===================================================================
-    // Download Pipeline — only RapidAPI mp36 (with retry)
+    // Download Pipeline - only yt-dlp (with retry)
     // ===================================================================
 
     private static final int MAX_RETRIES = 2;

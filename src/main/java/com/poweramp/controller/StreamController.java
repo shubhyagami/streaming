@@ -55,7 +55,15 @@ public class StreamController {
         // 1. Register a download session immediately and return
         String token = tempFileManager.register(title);
 
-        // 2. Start file download in background
+        // 2. Fetch direct mp3 URL from RapidAPI in background for fast playback
+        CompletableFuture.supplyAsync(() -> ytService.getRapidApiStreamUrl(videoId)).thenAccept(url -> {
+            if (url != null) {
+                tempFileManager.get(token).setDirectUrl(url);
+                log.info("Direct mp3 URL ready for {} token={}", videoId, token);
+            }
+        });
+
+        // 3. Start yt-dlp download in background for persistent file
         CompletableFuture.supplyAsync(() -> {
             try { return ytService.downloadAudio(videoId); } catch (Exception e) { throw new RuntimeException(e.getMessage(), e); }
         }).whenComplete((path, ex) -> {
@@ -179,10 +187,13 @@ public class StreamController {
         }
         
         if (entry.status() == TempFileManager.Status.DOWNLOADING) {
-            return ResponseEntity.ok(Map.of(
-                "status", "DOWNLOADING",
-                "title", entry.title()
-            ));
+            Map<String, Object> body = new java.util.HashMap<>();
+            body.put("status", "DOWNLOADING");
+            body.put("title", entry.title());
+            if (entry.directUrl() != null) {
+                body.put("directUrl", entry.directUrl());
+            }
+            return ResponseEntity.ok(body);
         } else if (entry.status() == TempFileManager.Status.ERROR) {
             return ResponseEntity.ok(Map.of(
                 "status", "ERROR", 
