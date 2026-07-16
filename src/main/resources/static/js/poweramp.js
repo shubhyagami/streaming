@@ -38,8 +38,9 @@ function initWebAudio() {
     }
     if (sourceNode) {
         try { sourceNode.disconnect(); } catch(e) {}
+    } else {
+        sourceNode = audioCtx.createMediaElementSource(audio);
     }
-    sourceNode = audioCtx.createMediaElementSource(audio);
     filterNodes = [];
     let prev = sourceNode;
     EQ_FREQS.forEach((freq, i) => {
@@ -106,8 +107,9 @@ function reconnectWebAudio() {
     if (!audio || !audioCtx) return;
     if (sourceNode) {
         try { sourceNode.disconnect(); } catch(e) {}
+    } else {
+        sourceNode = audioCtx.createMediaElementSource(audio);
     }
-    sourceNode = audioCtx.createMediaElementSource(audio);
     // Reconnect analyserNode if it exists
     if (analyserNode) {
         try { analyserNode.disconnect(); } catch(e) {}
