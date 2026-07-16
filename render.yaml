@@ -1,7 +1,7 @@
 services:
   - type: web
     name: hereyes
-    env: docker
+    runtime: docker
     repo: https://github.com/shubhyagami/streaming
     branch: main
     dockerfilePath: ./Dockerfile
@@ -9,7 +9,5 @@ services:
     envVars:
       - key: SERVER_PORT
         value: 8085
-      - key: SPRING_DATASOURCE_URL
-        value: jdbc:h2:file:./data/poweramp;AUTO_SERVER=TRUE;DB_CLOSE_ON_EXIT=TRUE
-      - key: SPRING_JPA_HIBERNATE_DDL_AUTO
-        value: update
+      - key: RAPIDAPI_KEY
+        value: e9f2c625ebmsh6cd2de7109f2f5ep1f9991jsn4f3b636412b2

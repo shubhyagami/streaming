@@ -1,18 +1,17 @@
 server:
-  port: 8085
+  port: ${SERVER_PORT:8085}
 
 spring:
   application:
     name: poweramp-spring
   datasource:
-    url: jdbc:h2:file:./data/poweramp;AUTO_SERVER=TRUE;DB_CLOSE_ON_EXIT=TRUE
+    url: jdbc:h2:mem:poweramp;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
     driver-class-name: org.h2.Driver
     username: sa
     password:
   h2:
     console:
-      enabled: true
-      path: /h2-console
+      enabled: false
   jpa:
     database-platform: org.hibernate.dialect.H2Dialect
     hibernate:
@@ -26,7 +25,7 @@ spring:
     init:
       mode: always
   thymeleaf:
-    cache: false
+    cache: true
     mode: HTML
     encoding: UTF-8
 
@@ -35,14 +34,12 @@ poweramp:
     base-path: /music
   audio:
     temp-output: /tmp/poweramp-output
-  temp-dir: ${java.io.tmpdir}/poweramp-stream
+  songs-dir: /tmp/poweramp-songs
   rapidapi:
-    host: youtube-mp36.p.rapidapi.com
+    host: youtube138.p.rapidapi.com
+    download-host: youtube-mp36.p.rapidapi.com
     spotify-host: spotify81.p.rapidapi.com
-    key: e9f2c625ebmsh6cd2de7109f2f5ep1f9991jsn4f3b636412b2
-  ytdlp:
-    path: yt-dlp
-    timeout: 120
+    key: ${RAPIDAPI_KEY:e9f2c625ebmsh6cd2de7109f2f5ep1f9991jsn4f3b636412b2}
   defaults:
     sample-rate: 44100
     bit-depth: 16
@@ -50,5 +47,5 @@ poweramp:
 
 logging:
   level:
-    com.poweramp: DEBUG
+    com.poweramp: INFO
     org.springframework: WARN

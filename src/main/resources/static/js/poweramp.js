@@ -620,6 +620,7 @@ function switchSource(source) {
 // ===== YouTube/Spotify Search & Playback =====
 let currentToken = null;
 let currentVideoId = null;
+let currentVideoStats = null;
 const PLAYER_STORAGE_KEY = 'powerampPlayer';
 
 function savePlayerState() {
@@ -642,6 +643,7 @@ function restorePlayerState() {
         if (!state.token) { sessionStorage.removeItem(PLAYER_STORAGE_KEY); return; }
         currentToken = state.token; currentVideoId = state.videoId;
         currentThumbnail = state.thumbnail || null;
+        if (state.videoId) fetchVideoDetails(state.videoId);
         const np = document.getElementById('now-playing');
         np.classList.remove('hidden');
         document.getElementById('np-title').textContent = state.title;
@@ -656,7 +658,12 @@ function restorePlayerState() {
                 savePlayerState();
             }
         };
-        audio.onended = function() { stopPlayback(); };
+        audio.onended = function() {
+            if (currentToken) {
+                fetch('/api/yt/finished/' + currentToken, { method: 'POST' }).catch(function(){});
+            }
+            stopPlayback();
+        };
         audio.onloadedmetadata = function() {
             if (state.currentTime > 0) audio.currentTime = Math.min(state.currentTime, audio.duration || 0);
             if (!state.paused) {
@@ -696,13 +703,16 @@ function searchYouTube() {
     document.getElementById('search-status').innerHTML = '<span class="status-msg">Searching YouTube...</span>';
     document.getElementById('search-results').innerHTML = '';
     fetch('/api/yt/search?q=' + encodeURIComponent(q))
-        .then(r => { if (!r.ok) throw new Error('Search failed'); return r.json(); })
+        .then(async r => {
+            if (!r.ok) { const body = await r.text().catch(() => '{}'); let msg = 'Search failed'; try { const j = JSON.parse(body); msg = j.message || j.error || msg; } catch(e){} throw new Error(msg); }
+            return r.json();
+        })
         .then(data => {
             document.getElementById('search-status').innerHTML = '';
             if (!data || data.length === 0) { document.getElementById('search-status').innerHTML = '<span class="status-msg">No results found</span>'; return; }
             renderYTResults(data);
         })
-        .catch(err => { document.getElementById('search-status').innerHTML = '<span class="status-msg error">Error: ' + err.message + '</span>'; });
+        .catch(err => { document.getElementById('search-status').innerHTML = '<span class="status-msg error">' + err.message + '</span>'; });
 }
 
 function searchSpotify() {
@@ -745,11 +755,9 @@ function renderSpotifyResults(results) {
     results.forEach(r => {
         const item = document.createElement('div');
         item.className = 'yt-result';
-        const hasAudioUrl = r.audioUrl && r.audioUrl.length > 0;
         const escapedTitle = escapeHtml(r.title).replace(/'/g, "\\'");
-        const playAttr = hasAudioUrl
-            ? `playSpotify('${escapeHtml(r.audioUrl).replace(/'/g, "\\'")}', '', '${escapedTitle}')`
-            : `playSpotify('', '${r.videoId}', '${escapedTitle}')`;
+        const videoId = r.videoId || r.id;
+        const playAttr = `playSpotify('${videoId}', '${escapedTitle}')`;
         item.innerHTML = `
             <div class="yt-result-thumb"><div style="width:60px;height:45px;border-radius:4px;background:var(--bg-card);display:flex;align-items:center;justify-content:center;"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/></svg></div></div>
             <div class="yt-result-info">
@@ -765,10 +773,14 @@ function renderSpotifyResults(results) {
 
 let pollingInterval = null;
 
+let win95ProgressValue = 0;
+
 function startPolling(token, title, thumbnail) {
     const spinner = document.getElementById('loading-spinner');
     
     if (pollingInterval) clearInterval(pollingInterval);
+    win95ProgressValue = 0;
+    updateWin95Progress();
     
     pollingInterval = setInterval(() => {
         fetch('/api/yt/stream/' + token + '/status')
@@ -780,13 +792,15 @@ function startPolling(token, title, thumbnail) {
                     spinner.classList.add('hidden');
                     currentToken = token;
                     const audio = document.getElementById('audio-player');
-                    audio.src = data.streamUrl;
-                    audio.play().then(() => {
-                        initWebAudio();
-                        initToneWeb();
-                        reconnectWebAudio();
-                        initSpectrumAnalyzer();
-                    }).catch(function(){});
+                    if (audio.paused || audio.ended || !audio.src) {
+                        audio.src = data.streamUrl;
+                        audio.play().then(() => {
+                            initWebAudio();
+                            initToneWeb();
+                            reconnectWebAudio();
+                            initSpectrumAnalyzer();
+                        }).catch(function(){});
+                    }
                     showNowPlaying(title, thumbnail);
                     setStatus('Playing: ' + title);
                     savePlayerState();
@@ -797,8 +811,8 @@ function startPolling(token, title, thumbnail) {
                     document.getElementById('search-status').innerHTML = '<span class="status-msg error">' + (data.error || 'Download failed') + '</span>';
                     setStatus('Download failed');
                 } else {
-                    // DOWNLOADING: keep polling
-                    setStatus('Downloading... (this may take up to 2 minutes)');
+                    // DOWNLOADING: animate Win95 progress bar
+                    updateWin95Progress();
                 }
             })
             .catch(err => {
@@ -807,30 +821,77 @@ function startPolling(token, title, thumbnail) {
     }, 2000);
 }
 
+function updateWin95Progress() {
+    win95ProgressValue = Math.min(win95ProgressValue + Math.random() * 15 + 3, 92);
+    const fill = document.getElementById('win95-progress-fill');
+    const status = document.getElementById('win95-progress-status');
+    if (fill) fill.style.width = win95ProgressValue + '%';
+    const msgs = [
+        'Checking archive...', 'Decrypting key...', 'Downloading...', 'Please wait...',
+        'Copying files...', 'Processing stream...', 'Almost done...', 'Writing to disk...',
+        'Converting format...', 'Contacting peer...', 'Verifying integrity...',
+    ];
+    if (status) status.textContent = msgs[Math.floor(Math.random() * msgs.length)];
+}
+
+function resetWin95Progress() {
+    win95ProgressValue = 0;
+    const fill = document.getElementById('win95-progress-fill');
+    const status = document.getElementById('win95-progress-status');
+    if (fill) fill.style.width = '0%';
+    if (status) status.textContent = 'Contacting server...';
+}
+
+function fetchVideoDetails(videoId) {
+    fetch('/api/yt/details?videoId=' + encodeURIComponent(videoId))
+        .then(r => { if (!r.ok) throw new Error('Details failed'); return r.json(); })
+        .then(d => {
+            currentVideoStats = d;
+            const el = document.getElementById('video-details');
+            document.getElementById('details-thumb').src = d.thumbnail || 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg';
+            document.getElementById('details-title').textContent = d.title || '';
+            document.getElementById('details-channel').textContent = d.channel || '';
+            const pub = d.publishedDate || d.publishedDateTime || '';
+            document.getElementById('details-published').textContent = pub ? 'Published ' + pub : '';
+            document.getElementById('details-views').textContent = d.views ? formatNumber(d.views) + ' views' : '0 views';
+            document.getElementById('details-likes').textContent = d.likes ? formatNumber(d.likes) : '0';
+            document.getElementById('details-comments').textContent = d.comments ? formatNumber(d.comments) : '0';
+            document.getElementById('details-duration').textContent = d.duration ? formatDuration(d.duration) : '0:00';
+            document.getElementById('details-description').textContent = d.description || '';
+            el.classList.remove('hidden');
+            showSection('dashboard');
+            updateCassette();
+        })
+        .catch(() => {});
+}
+
 function playVideo(videoId, title, thumbnail) {
     currentThumbnail = thumbnail || null;
     const spinner = document.getElementById('loading-spinner');
     spinner.classList.remove('hidden');
     currentVideoId = videoId;
-    setStatus('Starting download...');
+    setStatus('Starting...');
     fetch('/api/yt/stream?videoId=' + encodeURIComponent(videoId) + '&title=' + encodeURIComponent(title), { method: 'POST' })
         .then(async r => { if (!r.ok && r.status !== 202) { const errBody = await r.json().catch(() => ({})); throw new Error(errBody.error || 'Download failed'); } return r.json(); })
         .then(data => {
-            if (data.status === 'DOWNLOADING' || data.status === 'READY') {
-                startPolling(data.token, title, currentThumbnail);
-            }
+            startPolling(data.token, title, currentThumbnail);
         })
         .catch(err => { spinner.classList.add('hidden'); document.getElementById('search-status').innerHTML = '<span class="status-msg error">' + err.message + '</span>'; });
+
+    fetchVideoDetails(videoId);
 }
 
-function playSpotify(audioUrl, videoId, title) {
+function playSpotify(videoId, title) {
+    if (!videoId) {
+        document.getElementById('search-status').innerHTML = '<span class="status-msg error">No video ID available for this track</span>';
+        return;
+    }
     const spinner = document.getElementById('loading-spinner');
     spinner.classList.remove('hidden');
-    currentVideoId = videoId || 'spotify';
+    currentVideoId = videoId;
     setStatus('Starting download...');
     const params = 'title=' + encodeURIComponent(title)
-        + (audioUrl ? '&audioUrl=' + encodeURIComponent(audioUrl) : '')
-        + (videoId ? '&videoId=' + encodeURIComponent(videoId) : '');
+        + '&videoId=' + encodeURIComponent(videoId);
     fetch('/api/spotify/stream?' + params, { method: 'POST' })
         .then(async r => { if (!r.ok && r.status !== 202) { const errBody = await r.json().catch(() => ({})); throw new Error(errBody.error || 'Download failed'); } return r.json(); })
         .then(data => {
@@ -855,6 +916,9 @@ function updateCassette() {
     const currentEl = document.getElementById('cassette-current');
     const durEl = document.getElementById('cassette-duration');
     const fillEl = document.getElementById('cassette-progress-fill');
+    const stats1 = document.getElementById('cassette-stats-line1');
+    const stats2 = document.getElementById('cassette-stats-line2');
+    const stats3 = document.getElementById('cassette-stats-line3');
 
     if (isPlaying) {
         reels.forEach(r => r.classList.add('spinning'));
@@ -866,7 +930,7 @@ function updateCassette() {
         if (imgEl) {
             if (currentThumbnail) {
                 imgEl.setAttributeNS('http://www.w3.org/1999/xlink', 'href', currentThumbnail);
-                imgEl.setAttribute('opacity', '1');
+                imgEl.setAttribute('opacity', '0.4');
             } else {
                 imgEl.setAttribute('opacity', '0');
             }
@@ -874,6 +938,19 @@ function updateCassette() {
         if (currentEl) currentEl.textContent = formatTime(audio.currentTime);
         if (durEl) durEl.textContent = formatTime(audio.duration);
         if (fillEl) fillEl.style.width = ((audio.currentTime / audio.duration) * 100) + '%';
+        if (stats1 && currentVideoStats) {
+            const views = formatNumber(currentVideoStats.views);
+            const likes = formatNumber(currentVideoStats.likes);
+            const comments = formatNumber(currentVideoStats.comments);
+            stats1.textContent = views + ' views  |  ' + likes + ' likes  |  ' + comments + ' comments';
+        }
+        if (stats2 && currentVideoStats) {
+            const pub = currentVideoStats.publishedDate || currentVideoStats.publishedDateTime || '';
+            stats2.textContent = currentVideoStats.channel + (pub ? '  |  Published ' + pub : '');
+        }
+        if (stats3 && currentVideoStats) {
+            stats3.textContent = currentVideoStats.title.substring(0, 60);
+        }
     } else {
         reels.forEach(r => r.classList.remove('spinning'));
         if (titleEl) {
@@ -884,6 +961,9 @@ function updateCassette() {
         if (currentEl) currentEl.textContent = '0:00';
         if (durEl) durEl.textContent = '0:00';
         if (fillEl) fillEl.style.width = '0%';
+        if (stats1) stats1.textContent = '';
+        if (stats2) stats2.textContent = '';
+        if (stats3) stats3.textContent = '';
     }
 }
 
@@ -1001,7 +1081,13 @@ function showNowPlaying(title, thumbnail) {
             savePlayerState();
         }
     };
-    audio.onended = function() { stopPlayback(); };
+    audio.onended = function() {
+        // Tell server to delete the temp file immediately
+        if (currentToken) {
+            fetch('/api/yt/finished/' + currentToken, { method: 'POST' }).catch(function(){});
+        }
+        stopPlayback();
+    };
     startWave();
     updateCassette();
 }
@@ -1026,9 +1112,14 @@ function stopPlayback() {
     audio.src = '';
     document.getElementById('now-playing').classList.add('hidden');
     document.getElementById('play-pause-icon').innerHTML = '<path fill="currentColor" d="M8 5v14l11-7z"/>';
-    if (currentToken) { fetch('/api/yt/stop/' + currentToken, { method: 'POST' }).catch(function(){}); currentToken = null; }
+    // Tell server to delete temp file (stop = user manually stopped)
+    if (currentToken) {
+        fetch('/api/yt/stop/' + currentToken, { method: 'POST' }).catch(function(){});
+        currentToken = null;
+    }
     currentVideoId = null;
     currentThumbnail = null;
+    currentVideoStats = null;
     if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
     clearPlayerState();
     setStatus('Ready');
@@ -1039,6 +1130,14 @@ function stopPlayback() {
 }
 
 function setStatus(msg) { const el = document.getElementById('status-text'); if (el) el.textContent = msg; }
+
+function formatNumber(n) {
+    if (!n) return '0';
+    if (n >= 1000000000) return (n / 1000000000).toFixed(1) + 'B';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return n.toString();
+}
 
 function formatDuration(seconds) {
     if (!seconds || seconds <= 0) return '--:--';

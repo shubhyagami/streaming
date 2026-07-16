@@ -7,3 +7,4 @@ data/
 *.err
 start.bat
 kill_port.bat
+tmp_repo/

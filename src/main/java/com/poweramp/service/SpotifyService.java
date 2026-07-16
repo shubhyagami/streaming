@@ -8,22 +8,16 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Service
 public class SpotifyService {
@@ -36,9 +30,6 @@ public class SpotifyService {
 
     private final YouTubeService ytService;
 
-    @Value("${poweramp.temp-dir:#{systemProperties['java.io.tmpdir']}/poweramp-stream}")
-    private String tempDir;
-
     @Value("${poweramp.rapidapi.spotify-host:spotify81.p.rapidapi.com}")
     private String rapidApiHost;
 
@@ -49,10 +40,10 @@ public class SpotifyService {
         this.ytService = ytService;
     }
 
-    public record SpotifyResult(String id, String title, String artist, String audioUrl, String size, String videoId) {}
+    public record SpotifyResult(String id, String title, String artist, String size, String videoId) {}
 
     public List<SpotifyResult> search(String query) throws IOException, InterruptedException {
-        // Try real Spotify/SoundCloud API first (fast timeout)
+        // Try Spotify RapidAPI search first (fast timeout)
         try {
             List<SpotifyResult> results = searchRapidApi(query);
             if (!results.isEmpty()) return results;
@@ -68,7 +59,6 @@ public class SpotifyService {
                 yt.videoId(),
                 yt.title(),
                 yt.channel() + " (via YouTube)",
-                null,
                 formatDuration(yt.duration()),
                 yt.videoId()
             ));
@@ -102,98 +92,28 @@ public class SpotifyService {
         try {
             List<Map<String, Object>> items = mapper.readValue(body, new TypeReference<List<Map<String, Object>>>() {});
             for (Map<String, Object> item : items) {
-                String url = (String) item.get("url");
+                String title = (String) item.get("title");
                 String size = (String) item.get("size");
-                if (url == null || url.isBlank()) continue;
+                String videoId = (String) item.get("videoId");
                 results.add(new SpotifyResult(
-                    UUID.randomUUID().toString().substring(0, 8),
-                    query, "Spotify", url, size != null ? size : "", ""));
+                    videoId != null ? videoId : String.valueOf(results.size()),
+                    title != null ? title : query, "Spotify", size != null ? size : "", videoId != null ? videoId : ""));
             }
         } catch (Exception e) {
             // Try object format
             try {
                 Map<String, Object> obj = mapper.readValue(body, new TypeReference<Map<String, Object>>() {});
-                String url = (String) obj.get("url");
-                if (url != null && !url.isBlank()) {
-                    String size = (String) obj.get("size");
-                    results.add(new SpotifyResult(
-                        UUID.randomUUID().toString().substring(0, 8),
-                        query, "Spotify", url, size != null ? size : "", ""));
-                }
+                String title = (String) obj.get("title");
+                String size = (String) obj.get("size");
+                String videoId = (String) obj.get("videoId");
+                results.add(new SpotifyResult(
+                    videoId != null ? videoId : "0",
+                    title != null ? title : query, "Spotify", size != null ? size : "", videoId != null ? videoId : ""));
             } catch (Exception e2) {
                 log.warn("Cannot parse Spotify API response: {}", body.length() > 100 ? body.substring(0, 100) : body);
             }
         }
         return results;
-    }
-
-    public Path downloadAudio(String videoId, String title) throws IOException, InterruptedException {
-        // Try RapidAPI download first
-        try {
-            Path p = downloadViaRapidApi(videoId, title);
-            if (p != null) return p;
-        } catch (Exception e) {
-            log.warn("Spotify RapidAPI download failed, falling back to YouTube: {}", e.getMessage());
-        }
-
-        // Fallback to YouTube download
-        return ytService.downloadAudio(videoId);
-    }
-
-    private Path downloadViaRapidApi(String videoId, String title) throws Exception {
-        String apiUrl = "https://" + rapidApiHost + "/download_track?q="
-            + URLEncoder.encode(title, StandardCharsets.UTF_8) + "&onlyLinks=true";
-
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(apiUrl))
-            .header("x-rapidapi-host", rapidApiHost)
-            .header("x-rapidapi-key", rapidApiKey)
-            .header("Content-Type", "application/json")
-            .timeout(Duration.ofSeconds(10))
-            .GET()
-            .build();
-
-        HttpResponse<String> response = fastClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) return null;
-
-        String body = response.body();
-        if (body == null || body.isBlank() || "{}".equals(body.trim())) return null;
-
-        // Parse the download link from response
-        String downloadUrl = null;
-        try {
-            List<Map<String, Object>> items = mapper.readValue(body, new TypeReference<List<Map<String, Object>>>() {});
-            if (!items.isEmpty()) downloadUrl = (String) items.get(0).get("url");
-        } catch (Exception e) {
-            try {
-                Map<String, Object> obj = mapper.readValue(body, new TypeReference<Map<String, Object>>() {});
-                downloadUrl = (String) obj.get("url");
-            } catch (Exception e2) {
-                return null;
-            }
-        }
-
-        if (downloadUrl == null || downloadUrl.isBlank()) return null;
-
-        // Download the audio file
-        Path dir = Paths.get(tempDir);
-        Files.createDirectories(dir);
-        Path outputPath = dir.resolve(videoId + ".mp3");
-
-        HttpRequest dlRequest = HttpRequest.newBuilder()
-            .uri(URI.create(downloadUrl))
-            .timeout(Duration.ofMinutes(3))
-            .GET()
-            .build();
-
-        HttpResponse<InputStream> dlResponse = fastClient.send(dlRequest, HttpResponse.BodyHandlers.ofInputStream());
-        if (dlResponse.statusCode() != 200) return null;
-
-        try (InputStream in = dlResponse.body()) {
-            Files.copy(in, outputPath, StandardCopyOption.REPLACE_EXISTING);
-        }
-        log.info("Spotify download saved: {} ({} bytes)", outputPath.getFileName(), Files.size(outputPath));
-        return outputPath;
     }
 
     private String formatDuration(long seconds) {
