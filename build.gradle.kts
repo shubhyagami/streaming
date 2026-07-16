@@ -23,7 +23,7 @@ dependencies {
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
-    "developmentOnly"("org.springframework.boot:spring-boot-devtools")
+    // "developmentOnly"("org.springframework.boot:spring-boot-devtools")
 }
 
 tasks.withType<Test> {
