@@ -788,27 +788,6 @@ function startPolling(token, title, thumbnail) {
         fetch('/api/yt/stream/' + token + '/status')
             .then(r => r.json())
             .then(data => {
-                // Play immediately from mp36 direct URL if ready
-                if (data.directUrl && !document.getElementById('audio-player').src) {
-                    clearInterval(pollingInterval);
-                    pollingInterval = null;
-                    spinner.classList.add('hidden');
-                    currentToken = token;
-                    const audio = document.getElementById('audio-player');
-                    audio.src = data.directUrl;
-                    audio.play().then(() => {
-                        initWebAudio();
-                        initToneWeb();
-                        reconnectWebAudio();
-                        initSpectrumAnalyzer();
-                    }).catch(function(){});
-                    showNowPlaying(title, thumbnail);
-                    setStatus('Playing: ' + title);
-                    savePlayerState();
-                    // Keep polling silently for file download completion
-                    startPolling(token, title, thumbnail);
-                    return;
-                }
                 if (data.status === 'READY') {
                     clearInterval(pollingInterval);
                     pollingInterval = null;

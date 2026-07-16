@@ -395,34 +395,88 @@ public class YouTubeService {
     }
 
     // ===================================================================
-    // Download Pipeline - only yt-dlp (with retry)
+    // Download Pipeline — mp36 RapidAPI first, yt-dlp fallback
     // ===================================================================
 
-    private static final int MAX_RETRIES = 2;
-    private static final long RETRY_DELAY_MS = 2000;
-
     public Path downloadAudio(String videoId) throws IOException, InterruptedException {
-        IOException lastError = null;
-
-        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                Path result = downloadWithYtDlp(videoId);
-                log.info("✓ Downloaded via yt-dlp (attempt {}): {}", attempt + 1, videoId);
+        // Try mp36 RapidAPI first (works on datacenter IPs)
+        try {
+            Path result = downloadWithRapidApi(videoId);
+            if (result != null) {
+                log.info("✓ Downloaded via RapidAPI mp36: {}", videoId);
                 return result;
-            } catch (IOException e) {
-                lastError = e;
-                String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
-                log.warn("yt-dlp download attempt {} failed for {}: {}", attempt + 1, videoId, msg);
-                if (attempt < MAX_RETRIES) {
-                    Thread.sleep(RETRY_DELAY_MS);
-                }
             }
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
+            log.warn("RapidAPI mp36 download failed for {}: {}", videoId, msg);
+            // Fall through to yt-dlp
         }
 
-        String msg = lastError != null && lastError.getMessage() != null
-            ? lastError.getMessage() : "unknown error";
-        log.error("yt-dlp download failed after {} attempts for {}: {}", MAX_RETRIES + 1, videoId, msg);
-        throw new IOException("Download failed after retries. " + msg);
+        // Fallback: yt-dlp
+        try {
+            Path result = downloadWithYtDlp(videoId);
+            log.info("✓ Downloaded via yt-dlp: {}", videoId);
+            return result;
+        } catch (IOException e) {
+            String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
+            log.error("All download methods failed for {}: {}", videoId, msg);
+            throw new IOException("Download failed. " + msg);
+        }
+    }
+
+    private Path downloadWithRapidApi(String videoId) throws IOException, InterruptedException {
+        Path dir = Paths.get(songsDir);
+        Files.createDirectories(dir);
+
+        String apiUrl = "https://" + rapidApiDownloadHost + "/dl?id=" + videoId;
+        log.info("RapidAPI download request: {}", apiUrl);
+
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(apiUrl))
+            .header("x-rapidapi-host", rapidApiDownloadHost)
+            .header("x-rapidapi-key", rapidApiKey)
+            .header("Accept", "application/json")
+            .timeout(java.time.Duration.ofSeconds(30))
+            .GET()
+            .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) return null;
+
+        Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+        String status = (String) json.get("status");
+        if (!"ok".equals(status)) return null;
+
+        String downloadUrl = (String) json.get("link");
+        if (downloadUrl == null || downloadUrl.isBlank()) return null;
+
+        Path outputPath = dir.resolve(videoId + ".mp3");
+        log.info("Downloading mp3 from RapidAPI: {} ({} bytes)", json.get("title"), json.get("filesize"));
+
+        HttpRequest dlRequest = HttpRequest.newBuilder()
+            .uri(URI.create(downloadUrl))
+            .header("User-Agent", YT_USER_AGENT)
+            .timeout(java.time.Duration.ofMinutes(3))
+            .GET()
+            .build();
+
+        HttpResponse<InputStream> dlResponse = httpClient.send(dlRequest, HttpResponse.BodyHandlers.ofInputStream());
+        if (dlResponse.statusCode() != 200) {
+            throw new IOException("RapidAPI download status " + dlResponse.statusCode());
+        }
+
+        try (InputStream in = dlResponse.body()) {
+            Files.copy(in, outputPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        long fileSize = Files.size(outputPath);
+        if (fileSize < 10000) {
+            Files.deleteIfExists(outputPath);
+            throw new IOException("Downloaded file too small (" + fileSize + " bytes)");
+        }
+
+        log.info("RapidAPI mp3 saved: {} ({} bytes)", outputPath.getFileName(), fileSize);
+        return outputPath;
     }
 
     private Path downloadWithYtDlp(String videoId) throws IOException, InterruptedException {
