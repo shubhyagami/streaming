@@ -55,7 +55,7 @@ public class StreamController {
         // 1. Register a download session immediately and return
         String token = tempFileManager.register(title);
 
-        // 2. Start file download in background via yt-dlp
+        // 2. Start file download in background
         CompletableFuture.supplyAsync(() -> {
             try { return ytService.downloadAudio(videoId); } catch (Exception e) { throw new RuntimeException(e.getMessage(), e); }
         }).whenComplete((path, ex) -> {
@@ -119,15 +119,6 @@ public class StreamController {
         TempFileManager.TempEntry entry = tempFileManager.get(token);
         if (entry == null) {
             return ResponseEntity.notFound().build();
-        }
-
-        // Mark as served
-        tempFileManager.markServed(token);
-
-        if (entry.directUrl() != null && !entry.directUrl().isBlank()) {
-            return ResponseEntity.status(HttpStatus.FOUND)
-                .header(HttpHeaders.LOCATION, entry.directUrl())
-                .build();
         }
 
         if (entry.path() == null) {
@@ -202,8 +193,7 @@ public class StreamController {
             return ResponseEntity.ok(Map.of(
                 "status", "READY", 
                 "title", entry.title(),
-                "streamUrl", "/api/yt/stream/" + token,
-                "directUrl", entry.directUrl() != null ? entry.directUrl() : ""
+                "streamUrl", "/api/yt/stream/" + token
             ));
         }
     }
