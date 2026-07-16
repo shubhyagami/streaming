@@ -376,18 +376,18 @@ public class YouTubeService {
     private static final int MAX_RETRIES = 2;
     private static final long RETRY_DELAY_MS = 2000;
 
-    public String getAudioUrl(String videoId) throws IOException, InterruptedException {
+    public Path downloadAudio(String videoId) throws IOException, InterruptedException {
         IOException lastError = null;
 
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
-                String result = getUrlWithRapidApi(videoId);
-                log.info("✓ Got URL via RapidAPI (attempt {}): {}", attempt + 1, videoId);
+                Path result = downloadWithYtDlp(videoId);
+                log.info("✓ Downloaded via yt-dlp (attempt {}): {}", attempt + 1, videoId);
                 return result;
             } catch (IOException e) {
                 lastError = e;
                 String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
-                log.warn("RapidAPI URL attempt {} failed for {}: {}", attempt + 1, videoId, msg);
+                log.warn("yt-dlp download attempt {} failed for {}: {}", attempt + 1, videoId, msg);
                 if (attempt < MAX_RETRIES) {
                     Thread.sleep(RETRY_DELAY_MS);
                 }
@@ -396,46 +396,64 @@ public class YouTubeService {
 
         String msg = lastError != null && lastError.getMessage() != null
             ? lastError.getMessage() : "unknown error";
-        log.error("RapidAPI URL fetch failed after {} attempts for {}: {}", MAX_RETRIES + 1, videoId, msg);
-        throw new IOException("Failed to get URL after retries. " + msg);
+        log.error("yt-dlp download failed after {} attempts for {}: {}", MAX_RETRIES + 1, videoId, msg);
+        throw new IOException("Download failed after retries. " + msg);
     }
 
-    private String getUrlWithRapidApi(String videoId) throws IOException, InterruptedException {
-        String apiUrl = "https://" + rapidApiDownloadHost + "/dl?id=" + videoId;
-        log.info("RapidAPI URL request: {}", apiUrl);
+    private Path downloadWithYtDlp(String videoId) throws IOException, InterruptedException {
+        Path dir = Paths.get(songsDir);
+        Files.createDirectories(dir);
+        
+        // We use m4a (or webm) because we just extract the best audio track directly without converting
+        Path outputPath = dir.resolve(videoId + ".m4a");
 
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(apiUrl))
-            .header("x-rapidapi-host", rapidApiDownloadHost)
-            .header("x-rapidapi-key", rapidApiKey)
-            .header("Accept", "application/json")
-            .timeout(java.time.Duration.ofSeconds(30))
-            .GET()
-            .build();
+        List<String> command = new ArrayList<>();
+        command.add("yt-dlp");
+        command.add("--cookies");
+        command.add("youtube-cookies.txt"); // Provided by user, in CWD
+        command.add("-f");
+        command.add("bestaudio[ext=m4a]/bestaudio");
+        command.add("-o");
+        command.add(outputPath.toAbsolutePath().toString());
+        command.add("https://www.youtube.com/watch?v=" + videoId);
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        log.info("Running: {}", String.join(" ", command));
 
-        if (response.statusCode() == 429) {
-            throw new IOException("API rate limit reached. Please wait a moment and try again.");
-        }
-        if (response.statusCode() != 200) {
-            throw new IOException("API returned status " + response.statusCode());
-        }
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
 
-        Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
-        String status = (String) json.get("status");
-        if (!"ok".equals(status)) {
-            String msg = (String) json.get("msg");
-            throw new IOException("API error: " + (msg != null ? msg : status));
-        }
-
-        String downloadUrl = (String) json.get("link");
-        if (downloadUrl == null || downloadUrl.isBlank()) {
-            throw new IOException("No download link received from API");
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                log.info("[yt-dlp] {}: {}", videoId, line);
+            }
         }
 
-        log.info("Got MP3 URL: {}", json.get("title"));
-        return downloadUrl;
+        int exitCode = p.waitFor();
+        if (exitCode != 0) {
+            throw new IOException("yt-dlp exited with code " + exitCode);
+        }
+
+        // yt-dlp might have saved it with a different extension if m4a wasn't available, but we forced [ext=m4a].
+        // If it still failed to create exactly that file, let's search for it.
+        if (!Files.exists(outputPath)) {
+            // Find any file starting with the videoId in the directory
+            try (java.util.stream.Stream<Path> files = Files.list(dir)) {
+                outputPath = files.filter(f -> f.getFileName().toString().startsWith(videoId + "."))
+                                  .findFirst()
+                                  .orElseThrow(() -> new IOException("Could not find downloaded file for " + videoId));
+            }
+        }
+
+        long fileSize = Files.size(outputPath);
+        if (fileSize < 10000) {
+            Files.deleteIfExists(outputPath);
+            throw new IOException("Downloaded file too small (" + fileSize + " bytes)");
+        }
+
+        log.info("Saved via yt-dlp: {} ({} bytes)", outputPath.getFileName(), fileSize);
+        return outputPath;
     }
 
 }
