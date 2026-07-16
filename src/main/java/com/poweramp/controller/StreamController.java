@@ -57,12 +57,12 @@ public class StreamController {
 
         // 2. Start file download in background via YouTube MP3 API
         CompletableFuture.supplyAsync(() -> {
-            try { return ytService.downloadAudio(videoId); } catch (Exception e) { throw new RuntimeException(e.getMessage(), e); }
-        }).whenComplete((path, ex) -> {
+            try { return ytService.getAudioUrl(videoId); } catch (Exception e) { throw new RuntimeException(e.getMessage(), e); }
+        }).whenComplete((url, ex) -> {
             if (ex != null) {
                 tempFileManager.markError(token, extractRootCause(ex));
             } else {
-                tempFileManager.markReady(token, path);
+                tempFileManager.markReady(token, null, url);
             }
         });
 
@@ -91,17 +91,17 @@ public class StreamController {
         // 2. Download via YouTube MP3 API (same as YouTube stream)
         CompletableFuture.supplyAsync(() -> {
             try {
-                return ytService.downloadAudio(videoId);
+                return ytService.getAudioUrl(videoId);
             } catch (Exception e) {
                 throw new RuntimeException(e.getMessage(), e);
             }
-        }).whenComplete((path, ex) -> {
+        }).whenComplete((url, ex) -> {
             if (ex != null) {
                 String msg = extractRootCause(ex);
                 log.error("Spotify download failed for videoId={}: {}", videoId, msg);
                 tempFileManager.markError(token, msg);
             } else {
-                tempFileManager.markReady(token, path);
+                tempFileManager.markReady(token, null, url);
             }
         });
 
@@ -115,9 +115,22 @@ public class StreamController {
     // ===== Shared streaming (works for both YouTube and Spotify tokens) =====
 
     @GetMapping("/api/yt/stream/{token}")
-    public ResponseEntity<Resource> streamFile(@PathVariable String token) {
+    public ResponseEntity<?> streamFile(@PathVariable String token) {
         TempFileManager.TempEntry entry = tempFileManager.get(token);
-        if (entry == null || entry.path() == null) {
+        if (entry == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // Mark as served
+        tempFileManager.markServed(token);
+
+        if (entry.directUrl() != null && !entry.directUrl().isBlank()) {
+            return ResponseEntity.status(HttpStatus.FOUND)
+                .header(HttpHeaders.LOCATION, entry.directUrl())
+                .build();
+        }
+
+        if (entry.path() == null) {
             return ResponseEntity.notFound().build();
         }
 
@@ -189,7 +202,8 @@ public class StreamController {
             return ResponseEntity.ok(Map.of(
                 "status", "READY", 
                 "title", entry.title(),
-                "streamUrl", "/api/yt/stream/" + token
+                "streamUrl", "/api/yt/stream/" + token,
+                "directUrl", entry.directUrl() != null ? entry.directUrl() : ""
             ));
         }
     }
