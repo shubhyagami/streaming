@@ -7,15 +7,14 @@ RUN gradle build --no-daemon -x test
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 
-# Install yt-dlp (standalone binary, auto-detect architecture), ffmpeg
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg curl && \
-    (curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp || \
-     curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64 -o /usr/local/bin/yt-dlp) && \
-    chmod a+rx /usr/local/bin/yt-dlp && \
-    /usr/local/bin/yt-dlp --version && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# Create temp directory for songs (writable on Render)
+RUN mkdir -p /tmp/poweramp-songs && chmod 777 /tmp/poweramp-songs
 
 COPY --from=build /app/build/libs/poweramp-spring.jar app.jar
+
+# Render provides PORT env variable; Spring Boot reads SERVER_PORT or server.port
+ENV SERVER_PORT=8085
 EXPOSE 8085
-ENTRYPOINT ["java", "-jar", "app.jar"]
+
+# JVM tuning for Render free-tier (512MB RAM)
+ENTRYPOINT ["java", "-Xmx384m", "-Xms128m", "-XX:+UseG1GC", "-XX:MaxGCPauseMillis=100", "-Djava.io.tmpdir=/tmp", "-jar", "app.jar"]

@@ -1,13 +1,16 @@
 package com.poweramp.service;
 
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -21,6 +24,9 @@ public class TempFileManager {
 
     private static final Logger log = LoggerFactory.getLogger(TempFileManager.class);
     private static final long MAX_AGE_MS = 600_000; // 10 minutes
+
+    @Value("${poweramp.songs-dir:#{systemProperties['java.io.tmpdir']}/poweramp-songs}")
+    private String songsDir;
 
     private final Map<String, TempEntry> files = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -37,34 +43,60 @@ public class TempFileManager {
 
     public static class TempEntry {
         private Path path; // Can be null while DOWNLOADING
-        private String directUrl; // Immediate playable URL from YouTube CDN
         private final Instant createdAt;
         private final String title;
         private Status status;
         private String errorMessage;
+        private volatile boolean served; // true once the file has been served to the client
 
         public TempEntry(String title) {
             this.createdAt = Instant.now();
             this.title = title;
             this.status = Status.DOWNLOADING;
+            this.served = false;
         }
 
         public Path path() { return path; }
-        public String directUrl() { return directUrl; }
         public Instant createdAt() { return createdAt; }
         public String title() { return title; }
         public Status status() { return status; }
         public String errorMessage() { return errorMessage; }
+        public boolean served() { return served; }
 
         public void setPath(Path path) { this.path = path; }
-        public void setDirectUrl(String directUrl) { this.directUrl = directUrl; }
         public void setStatus(Status status) { this.status = status; }
         public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+        public void setServed(boolean served) { this.served = served; }
     }
 
-    public void setDirectUrl(String token, String directUrl) {
-        TempEntry entry = files.get(token);
-        if (entry != null) entry.setDirectUrl(directUrl);
+    /**
+     * On startup, ensure the songs directory exists and clean up any leftover files
+     * from previous runs (important on Render where /tmp persists across restarts
+     * within the same deploy).
+     */
+    @PostConstruct
+    public void init() {
+        try {
+            Path dir = Paths.get(songsDir);
+            Files.createDirectories(dir);
+            log.info("Songs temp directory ready: {}", dir.toAbsolutePath());
+
+            // Clean up any leftover files from previous runs
+            if (Files.exists(dir)) {
+                try (var stream = Files.list(dir)) {
+                    stream.forEach(file -> {
+                        try {
+                            Files.deleteIfExists(file);
+                            log.info("Cleaned up leftover file: {}", file.getFileName());
+                        } catch (IOException e) {
+                            log.warn("Could not clean up: {}", file, e);
+                        }
+                    });
+                }
+            }
+        } catch (IOException e) {
+            log.error("Failed to initialize songs directory: {}", e.getMessage());
+        }
     }
 
     // Initialize a new download session
@@ -96,46 +128,103 @@ public class TempFileManager {
         return files.get(token);
     }
 
-    // Schedule auto-deletion after song duration completes (with buffer for seeking/replay)
-    public void scheduleDeleteAfter(String token, long durationSeconds) {
-        long delay = Math.max(durationSeconds + 30, 120); // duration + 30s buffer, min 2 min
+    /**
+     * Mark that the file has been served to the client (audio started playing).
+     * This starts the auto-deletion timer.
+     */
+    public void markServed(String token) {
+        TempEntry entry = files.get(token);
+        if (entry != null && !entry.served()) {
+            entry.setServed(true);
+            // Schedule auto-deletion after a generous buffer (5 minutes after first serve)
+            // This covers seeking, replay, and slow connections
+            scheduleDeleteAfter(token, 300);
+        }
+    }
+
+    /**
+     * Called by the frontend when a song finishes playing.
+     * Immediately deletes the temp file to free disk space on Render.
+     */
+    public void finishPlayback(String token) {
+        log.info("Song playback finished, deleting: {}", token);
+        delete(token);
+    }
+
+    // Schedule auto-deletion after delay (seconds)
+    public void scheduleDeleteAfter(String token, long delaySeconds) {
         scheduler.schedule(() -> {
             TempEntry entry = files.get(token);
-            if (entry != null && entry.status() == Status.READY) {
-                log.info("Auto-deleting song after playback: {} ({})", entry.title(), token);
+            if (entry != null) {
+                log.info("Auto-deleting song after timeout: {} ({})", entry.title(), token);
                 delete(token);
             }
-        }, delay, TimeUnit.SECONDS);
+        }, delaySeconds, TimeUnit.SECONDS);
     }
 
     public void delete(String token) {
         TempEntry entry = files.remove(token);
         if (entry != null && entry.path() != null) {
             try {
-                Files.deleteIfExists(entry.path());
-                log.debug("Deleted temp file: {}", entry.path());
+                boolean deleted = Files.deleteIfExists(entry.path());
+                if (deleted) {
+                    log.info("Deleted temp file: {}", entry.path().getFileName());
+                }
             } catch (IOException e) {
                 log.warn("Failed to delete temp file: {}", entry.path(), e);
             }
         }
     }
 
+    /**
+     * Periodic cleanup: removes stale entries and their files.
+     * Runs every 60 seconds. Catches entries that weren't cleaned up properly.
+     */
     @Scheduled(fixedRate = 60_000)
     public void cleanupStale() {
         Instant cutoff = Instant.now().minusMillis(MAX_AGE_MS);
         files.entrySet().removeIf(e -> {
-            if (e.getValue().createdAt().isBefore(cutoff)) {
-                if (e.getValue().path() != null) {
+            TempEntry entry = e.getValue();
+            if (entry.createdAt().isBefore(cutoff)) {
+                if (entry.path() != null) {
                     try {
-                        Files.deleteIfExists(e.getValue().path());
-                        log.info("Cleaned up stale temp file: {}", e.getValue().path());
+                        boolean deleted = Files.deleteIfExists(entry.path());
+                        if (deleted) {
+                            log.info("Cleaned up stale temp file: {}", entry.path().getFileName());
+                        }
                     } catch (IOException ex) {
-                        log.warn("Failed to delete stale file: {}", e.getValue().path(), ex);
+                        log.warn("Failed to delete stale file: {}", entry.path(), ex);
                     }
                 }
                 return true;
             }
             return false;
         });
+
+        // Also clean up any orphaned files in the songs directory
+        // (files that exist on disk but have no matching token)
+        try {
+            Path dir = Paths.get(songsDir);
+            if (Files.exists(dir)) {
+                try (var stream = Files.list(dir)) {
+                    stream.forEach(file -> {
+                        String name = file.getFileName().toString();
+                        boolean hasToken = files.values().stream()
+                            .anyMatch(entry -> entry.path() != null &&
+                                entry.path().getFileName().toString().equals(name));
+                        if (!hasToken) {
+                            try {
+                                Files.deleteIfExists(file);
+                                log.info("Cleaned up orphaned file: {}", name);
+                            } catch (IOException ex) {
+                                log.warn("Failed to delete orphaned file: {}", name, ex);
+                            }
+                        }
+                    });
+                }
+            }
+        } catch (IOException e) {
+            log.warn("Failed to scan songs directory for orphans", e);
+        }
     }
 }

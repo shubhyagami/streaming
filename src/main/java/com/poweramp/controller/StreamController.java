@@ -7,14 +7,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
-import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -56,15 +55,7 @@ public class StreamController {
         // 1. Register a download session immediately and return
         String token = tempFileManager.register(title);
 
-        // 2. Fetch direct stream URL in background (media downloader API)
-        CompletableFuture.supplyAsync(() -> ytService.getFastStreamUrl(videoId)).thenAccept(url -> {
-            if (url != null) {
-                tempFileManager.setDirectUrl(token, url);
-                log.info("Direct stream URL ready for {} token={}", videoId, token);
-            }
-        });
-
-        // 3. Start file download in background for persistence
+        // 2. Start file download in background via YouTube MP3 API
         CompletableFuture.supplyAsync(() -> {
             try { return ytService.downloadAudio(videoId); } catch (Exception e) { throw new RuntimeException(e.getMessage(), e); }
         }).whenComplete((path, ex) -> {
@@ -75,14 +66,14 @@ public class StreamController {
             }
         });
 
-        // 4. Return immediately — client polls for status
+        // 3. Return immediately — client polls for status
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
             "token", token,
             "status", "DOWNLOADING"
         ));
     }
 
-    // ===== Spotify =====
+    // ===== Spotify (search only — downloads use YouTube MP3 API) =====
 
     @GetMapping("/api/spotify/search")
     public List<SpotifyService.SpotifyResult> searchSpotify(@RequestParam String q) throws Exception {
@@ -91,29 +82,23 @@ public class StreamController {
 
     @PostMapping("/api/spotify/stream")
     public ResponseEntity<Map<String, String>> startSpotifyStream(
-            @RequestParam(defaultValue = "") String audioUrl,
-            @RequestParam(defaultValue = "") String videoId,
+            @RequestParam String videoId,
             @RequestParam String title) {
 
-        boolean useRapidApi = audioUrl != null && !audioUrl.isBlank();
-        String id = useRapidApi ? java.util.UUID.randomUUID().toString().substring(0, 8) : videoId;
-
-        // 1. Immediately register a download session
+        // 1. Register a download session
         String token = tempFileManager.register(title);
 
-        // 2. Start download in the background
+        // 2. Download via YouTube MP3 API (same as YouTube stream)
         CompletableFuture.supplyAsync(() -> {
             try {
-                return useRapidApi
-                    ? spotifyService.downloadAudio(audioUrl, id)
-                    : ytService.downloadAudio(videoId);
+                return ytService.downloadAudio(videoId);
             } catch (Exception e) {
                 throw new RuntimeException(e.getMessage(), e);
             }
         }).whenComplete((path, ex) -> {
             if (ex != null) {
                 String msg = extractRootCause(ex);
-                log.error("Spotify download failed for id={}: {}", id, msg);
+                log.error("Spotify download failed for videoId={}: {}", videoId, msg);
                 tempFileManager.markError(token, msg);
             } else {
                 tempFileManager.markReady(token, path);
@@ -127,45 +112,6 @@ public class StreamController {
         ));
     }
 
-    // ===== Direct stream proxy (immediate playback from YouTube CDN) =====
-
-    @GetMapping("/api/yt/direct/{token}")
-    public void directStream(@PathVariable String token, HttpServletResponse response,
-                             @RequestHeader(value = "Range", required = false) String rangeHeader) throws Exception {
-        TempFileManager.TempEntry entry = tempFileManager.get(token);
-        if (entry == null || entry.directUrl() == null) {
-            response.sendError(404);
-            return;
-        }
-
-        // Schedule auto-deletion
-        tempFileManager.scheduleDeleteAfter(token, 0);
-
-        // Proxy the YouTube CDN stream
-        var httpClient = java.net.http.HttpClient.newBuilder()
-            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
-            .build();
-        var proxyReqBuilder = java.net.http.HttpRequest.newBuilder()
-            .uri(URI.create(entry.directUrl()))
-            .header("User-Agent", "Mozilla/5.0")
-            .header("Referer", "https://www.youtube.com/");
-        // Forward Range header for seeking support
-        if (rangeHeader != null) proxyReqBuilder.header("Range", rangeHeader);
-        var proxyReq = proxyReqBuilder.GET()
-            .build();
-        var proxyRes = httpClient.send(proxyReq, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
-
-        response.setStatus(proxyRes.statusCode());
-        proxyRes.headers().map().forEach((k, v) -> {
-            if (!"transfer-encoding".equalsIgnoreCase(k) && !"content-encoding".equalsIgnoreCase(k)) {
-                v.forEach(val -> response.setHeader(k, val));
-            }
-        });
-        try (var out = response.getOutputStream(); var in = proxyRes.body()) {
-            in.transferTo(out);
-        }
-    }
-
     // ===== Shared streaming (works for both YouTube and Spotify tokens) =====
 
     @GetMapping("/api/yt/stream/{token}")
@@ -176,21 +122,41 @@ public class StreamController {
         }
 
         Path path = entry.path();
-        if (!java.nio.file.Files.exists(path)) {
+        if (!Files.exists(path)) {
             tempFileManager.delete(token);
             return ResponseEntity.notFound().build();
         }
 
-        // Schedule auto-deletion after song duration (with buffer)
-        tempFileManager.scheduleDeleteAfter(token, 0);
+        // Mark as served — starts the auto-deletion timer
+        tempFileManager.markServed(token);
 
         String contentType = getContentType(path);
         Resource resource = new FileSystemResource(path.toFile());
 
-        return ResponseEntity.ok()
-            .contentType(MediaType.parseMediaType(contentType))
-            .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
-            .body(resource);
+        try {
+            long fileSize = Files.size(path);
+            return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(contentType))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(fileSize))
+                .header(HttpHeaders.ACCEPT_RANGES, "bytes")
+                .body(resource);
+        } catch (Exception e) {
+            return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(contentType))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                .body(resource);
+        }
+    }
+
+    /**
+     * Called by the frontend when a song finishes playing.
+     * Immediately deletes the temp file to free disk space.
+     */
+    @PostMapping("/api/yt/finished/{token}")
+    public ResponseEntity<Void> songFinished(@PathVariable String token) {
+        tempFileManager.finishPlayback(token);
+        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/api/yt/stop/{token}")
@@ -209,14 +175,10 @@ public class StreamController {
         }
         
         if (entry.status() == TempFileManager.Status.DOWNLOADING) {
-            Map<String, Object> body = new java.util.HashMap<>();
-            body.put("status", "DOWNLOADING");
-            body.put("title", entry.title());
-            if (entry.directUrl() != null) {
-                body.put("directUrl", entry.directUrl());
-                body.put("streamUrl", "/api/yt/direct/" + token);
-            }
-            return ResponseEntity.ok(body);
+            return ResponseEntity.ok(Map.of(
+                "status", "DOWNLOADING",
+                "title", entry.title()
+            ));
         } else if (entry.status() == TempFileManager.Status.ERROR) {
             return ResponseEntity.ok(Map.of(
                 "status", "ERROR", 

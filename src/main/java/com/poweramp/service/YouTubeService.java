@@ -7,10 +7,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -19,12 +17,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
-import org.asynchttpclient.AsyncHttpClient;
-import org.asynchttpclient.DefaultAsyncHttpClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 @Service
 public class YouTubeService {
@@ -58,31 +53,6 @@ public class YouTubeService {
         String publishedDate, String publishedDateTime, boolean isLive,
         String thumbnail
     ) {}
-
-    // ===== Video Details & Direct Stream URL =====
-
-    public String getFastStreamUrl(String videoId) {
-        return getRapidApiStreamUrl(videoId);
-    }
-
-    public String getRapidApiStreamUrl(String videoId) {
-        try (AsyncHttpClient client = new DefaultAsyncHttpClient()) {
-            String json = client.prepare("GET", "https://" + rapidApiDownloadHost + "/dl?id=" + videoId)
-                .setHeader("x-rapidapi-key", rapidApiKey)
-                .setHeader("x-rapidapi-host", rapidApiDownloadHost)
-                .execute()
-                .toCompletableFuture()
-                .get(15, TimeUnit.SECONDS)
-                .getResponseBody();
-            Map<String, Object> map = mapper.readValue(json, new TypeReference<Map<String, Object>>() {});
-            if (!"ok".equals(map.get("status"))) return null;
-            String link = (String) map.get("link");
-            return link != null && !link.isBlank() ? link : null;
-        } catch (Exception e) {
-            log.warn("getRapidApiStreamUrl failed for {}: {}", videoId, e.getMessage());
-            return null;
-        }
-    }
 
     @SuppressWarnings("unchecked")
     public VideoDetails getVideoDetails(String videoId) throws IOException, InterruptedException {
@@ -398,19 +368,34 @@ public class YouTubeService {
 
 
     // ===================================================================
-    // Download Pipeline — only RapidAPI mp36
+    // Download Pipeline — only RapidAPI mp36 (with retry)
     // ===================================================================
 
+    private static final int MAX_RETRIES = 2;
+    private static final long RETRY_DELAY_MS = 2000;
+
     public Path downloadAudio(String videoId) throws IOException, InterruptedException {
-        try {
-            Path result = downloadWithRapidApi(videoId);
-            log.info("✓ Downloaded via RapidAPI: {}", videoId);
-            return result;
-        } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
-            log.error("RapidAPI download failed for {}: {}", videoId, msg);
-            throw new IOException("Could not download audio. RapidAPI: " + msg);
+        IOException lastError = null;
+
+        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                Path result = downloadWithRapidApi(videoId);
+                log.info("✓ Downloaded via RapidAPI (attempt {}): {}", attempt + 1, videoId);
+                return result;
+            } catch (IOException e) {
+                lastError = e;
+                String msg = e.getMessage() != null ? e.getMessage() : "unknown error";
+                log.warn("RapidAPI download attempt {} failed for {}: {}", attempt + 1, videoId, msg);
+                if (attempt < MAX_RETRIES) {
+                    Thread.sleep(RETRY_DELAY_MS);
+                }
+            }
         }
+
+        String msg = lastError != null && lastError.getMessage() != null
+            ? lastError.getMessage() : "unknown error";
+        log.error("RapidAPI download failed after {} attempts for {}: {}", MAX_RETRIES + 1, videoId, msg);
+        throw new IOException("Download failed after retries. " + msg);
     }
 
     private Path downloadWithRapidApi(String videoId) throws IOException, InterruptedException {
@@ -431,24 +416,27 @@ public class YouTubeService {
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
+        if (response.statusCode() == 429) {
+            throw new IOException("API rate limit reached. Please wait a moment and try again.");
+        }
         if (response.statusCode() != 200) {
-            throw new IOException("RapidAPI status " + response.statusCode());
+            throw new IOException("API returned status " + response.statusCode());
         }
 
         Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
         String status = (String) json.get("status");
         if (!"ok".equals(status)) {
             String msg = (String) json.get("msg");
-            throw new IOException("RapidAPI error: " + (msg != null ? msg : status));
+            throw new IOException("API error: " + (msg != null ? msg : status));
         }
 
         String downloadUrl = (String) json.get("link");
         if (downloadUrl == null || downloadUrl.isBlank()) {
-            throw new IOException("No download link from RapidAPI");
+            throw new IOException("No download link received from API");
         }
 
         Path outputPath = dir.resolve(videoId + ".mp3");
-        log.info("Downloading from RapidAPI: {} ({} bytes)", json.get("title"), json.get("filesize"));
+        log.info("Downloading MP3: {} ({} bytes)", json.get("title"), json.get("filesize"));
 
         HttpRequest downloadRequest = HttpRequest.newBuilder()
             .uri(URI.create(downloadUrl))
@@ -461,7 +449,7 @@ public class YouTubeService {
             HttpResponse.BodyHandlers.ofInputStream());
 
         if (downloadResponse.statusCode() != 200) {
-            throw new IOException("RapidAPI download status " + downloadResponse.statusCode());
+            throw new IOException("MP3 download returned status " + downloadResponse.statusCode());
         }
 
         try (InputStream in = downloadResponse.body()) {
@@ -471,15 +459,11 @@ public class YouTubeService {
         long fileSize = Files.size(outputPath);
         if (fileSize < 10000) {
             Files.deleteIfExists(outputPath);
-            throw new IOException("RapidAPI download too small (" + fileSize + " bytes)");
+            throw new IOException("Downloaded file too small (" + fileSize + " bytes) — may be corrupted");
         }
 
-        log.info("RapidAPI saved: {} ({} bytes)", outputPath.getFileName(), fileSize);
+        log.info("Saved: {} ({} bytes)", outputPath.getFileName(), fileSize);
         return outputPath;
     }
-
-    // ===== Method 4: Direct YouTube page scrape =====
-    // Scrapes youtube.com/watch?v=VIDEO_ID HTML, extracts ytInitialPlayerResponse JSON,
-    // finds the best audio-only stream URL, and downloads it directly.
 
 }

@@ -658,7 +658,12 @@ function restorePlayerState() {
                 savePlayerState();
             }
         };
-        audio.onended = function() { stopPlayback(); };
+        audio.onended = function() {
+            if (currentToken) {
+                fetch('/api/yt/finished/' + currentToken, { method: 'POST' }).catch(function(){});
+            }
+            stopPlayback();
+        };
         audio.onloadedmetadata = function() {
             if (state.currentTime > 0) audio.currentTime = Math.min(state.currentTime, audio.duration || 0);
             if (!state.paused) {
@@ -750,11 +755,9 @@ function renderSpotifyResults(results) {
     results.forEach(r => {
         const item = document.createElement('div');
         item.className = 'yt-result';
-        const hasAudioUrl = r.audioUrl && r.audioUrl.length > 0;
         const escapedTitle = escapeHtml(r.title).replace(/'/g, "\\'");
-        const playAttr = hasAudioUrl
-            ? `playSpotify('${escapeHtml(r.audioUrl).replace(/'/g, "\\'")}', '', '${escapedTitle}')`
-            : `playSpotify('', '${r.videoId}', '${escapedTitle}')`;
+        const videoId = r.videoId || r.id;
+        const playAttr = `playSpotify('${videoId}', '${escapedTitle}')`;
         item.innerHTML = `
             <div class="yt-result-thumb"><div style="width:60px;height:45px;border-radius:4px;background:var(--bg-card);display:flex;align-items:center;justify-content:center;"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/></svg></div></div>
             <div class="yt-result-info">
@@ -783,29 +786,6 @@ function startPolling(token, title, thumbnail) {
         fetch('/api/yt/stream/' + token + '/status')
             .then(r => r.json())
             .then(data => {
-                // Play immediately if direct URL is ready (before full download)
-                if (data.directUrl && !document.getElementById('audio-player').src) {
-                    clearInterval(pollingInterval);
-                    pollingInterval = null;
-                    spinner.classList.add('hidden');
-                    currentToken = token;
-                    const audio = document.getElementById('audio-player');
-                    audio.src = data.streamUrl || data.directUrl;
-                    audio.play().then(() => {
-                        initWebAudio();
-                        initToneWeb();
-                        reconnectWebAudio();
-                        initSpectrumAnalyzer();
-                    }).catch(function(){
-                        // autoplay blocked by browser — will retry on READY
-                    });
-                    showNowPlaying(title, thumbnail);
-                    setStatus('Loading stream...');
-                    savePlayerState();
-                    // Keep polling silently for file download completion
-                    startPolling(token, title, thumbnail);
-                    return;
-                }
                 if (data.status === 'READY') {
                     clearInterval(pollingInterval);
                     pollingInterval = null;
@@ -901,14 +881,17 @@ function playVideo(videoId, title, thumbnail) {
     fetchVideoDetails(videoId);
 }
 
-function playSpotify(audioUrl, videoId, title) {
+function playSpotify(videoId, title) {
+    if (!videoId) {
+        document.getElementById('search-status').innerHTML = '<span class="status-msg error">No video ID available for this track</span>';
+        return;
+    }
     const spinner = document.getElementById('loading-spinner');
     spinner.classList.remove('hidden');
-    currentVideoId = videoId || 'spotify';
+    currentVideoId = videoId;
     setStatus('Starting download...');
     const params = 'title=' + encodeURIComponent(title)
-        + (audioUrl ? '&audioUrl=' + encodeURIComponent(audioUrl) : '')
-        + (videoId ? '&videoId=' + encodeURIComponent(videoId) : '');
+        + '&videoId=' + encodeURIComponent(videoId);
     fetch('/api/spotify/stream?' + params, { method: 'POST' })
         .then(async r => { if (!r.ok && r.status !== 202) { const errBody = await r.json().catch(() => ({})); throw new Error(errBody.error || 'Download failed'); } return r.json(); })
         .then(data => {
@@ -1098,7 +1081,13 @@ function showNowPlaying(title, thumbnail) {
             savePlayerState();
         }
     };
-    audio.onended = function() { stopPlayback(); };
+    audio.onended = function() {
+        // Tell server to delete the temp file immediately
+        if (currentToken) {
+            fetch('/api/yt/finished/' + currentToken, { method: 'POST' }).catch(function(){});
+        }
+        stopPlayback();
+    };
     startWave();
     updateCassette();
 }
@@ -1123,7 +1112,11 @@ function stopPlayback() {
     audio.src = '';
     document.getElementById('now-playing').classList.add('hidden');
     document.getElementById('play-pause-icon').innerHTML = '<path fill="currentColor" d="M8 5v14l11-7z"/>';
-    if (currentToken) { fetch('/api/yt/stop/' + currentToken, { method: 'POST' }).catch(function(){}); currentToken = null; }
+    // Tell server to delete temp file (stop = user manually stopped)
+    if (currentToken) {
+        fetch('/api/yt/stop/' + currentToken, { method: 'POST' }).catch(function(){});
+        currentToken = null;
+    }
     currentVideoId = null;
     currentThumbnail = null;
     currentVideoStats = null;
