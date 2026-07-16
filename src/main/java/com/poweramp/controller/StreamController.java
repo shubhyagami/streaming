@@ -245,7 +245,7 @@ public class StreamController {
 
     private String getContentType(Path path) {
         String name = path.getFileName().toString().toLowerCase();
-        if (name.endsWith(".m4a")) return "audio/mp4";
+        if (name.endsWith(".m4a") || name.endsWith(".mp4")) return "audio/mp4";
         if (name.endsWith(".mp3")) return "audio/mpeg";
         if (name.endsWith(".webm")) return "audio/webm";
         if (name.endsWith(".wav")) return "audio/wav";
