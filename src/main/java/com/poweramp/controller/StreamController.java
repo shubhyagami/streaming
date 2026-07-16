@@ -55,14 +55,14 @@ public class StreamController {
         // 1. Register a download session immediately and return
         String token = tempFileManager.register(title);
 
-        // 2. Start file download in background via YouTube MP3 API
+        // 2. Start file download in background via yt-dlp
         CompletableFuture.supplyAsync(() -> {
-            try { return ytService.getAudioUrl(videoId); } catch (Exception e) { throw new RuntimeException(e.getMessage(), e); }
-        }).whenComplete((url, ex) -> {
+            try { return ytService.downloadAudio(videoId); } catch (Exception e) { throw new RuntimeException(e.getMessage(), e); }
+        }).whenComplete((path, ex) -> {
             if (ex != null) {
                 tempFileManager.markError(token, extractRootCause(ex));
             } else {
-                tempFileManager.markReady(token, null, url);
+                tempFileManager.markReady(token, path, null);
             }
         });
 
@@ -91,17 +91,17 @@ public class StreamController {
         // 2. Download via YouTube MP3 API (same as YouTube stream)
         CompletableFuture.supplyAsync(() -> {
             try {
-                return ytService.getAudioUrl(videoId);
+                return ytService.downloadAudio(videoId);
             } catch (Exception e) {
                 throw new RuntimeException(e.getMessage(), e);
             }
-        }).whenComplete((url, ex) -> {
+        }).whenComplete((path, ex) -> {
             if (ex != null) {
                 String msg = extractRootCause(ex);
                 log.error("Spotify download failed for videoId={}: {}", videoId, msg);
                 tempFileManager.markError(token, msg);
             } else {
-                tempFileManager.markReady(token, null, url);
+                tempFileManager.markReady(token, path, null);
             }
         });
 
