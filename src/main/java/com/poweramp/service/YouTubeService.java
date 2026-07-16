@@ -404,15 +404,17 @@ public class YouTubeService {
         Path dir = Paths.get(songsDir);
         Files.createDirectories(dir);
         
-        // We use m4a (or webm) because we just extract the best audio track directly without converting
-        Path outputPath = dir.resolve(videoId + ".m4a");
+        // We use mp4 (format 18) because the Android client bypasses YouTube bot protection
+        // and format 18 is guaranteed to have a compatible audio track.
+        Path outputPath = dir.resolve(videoId + ".mp4");
 
         List<String> command = new ArrayList<>();
         command.add("yt-dlp");
-        command.add("--cookies");
-        command.add("youtube-cookies.txt"); // Provided by user, in CWD
+        // Use android client to bypass PO Token / Bot Protection
+        command.add("--extractor-args");
+        command.add("youtube:player_client=android");
         command.add("-f");
-        command.add("bestaudio[ext=m4a]/bestaudio");
+        command.add("18/bestaudio");
         command.add("-o");
         command.add(outputPath.toAbsolutePath().toString());
         command.add("https://www.youtube.com/watch?v=" + videoId);
@@ -435,8 +437,6 @@ public class YouTubeService {
             throw new IOException("yt-dlp exited with code " + exitCode);
         }
 
-        // yt-dlp might have saved it with a different extension if m4a wasn't available, but we forced [ext=m4a].
-        // If it still failed to create exactly that file, let's search for it.
         if (!Files.exists(outputPath)) {
             // Find any file starting with the videoId in the directory
             try (java.util.stream.Stream<Path> files = Files.list(dir)) {
