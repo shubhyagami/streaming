@@ -494,6 +494,17 @@ public class YouTubeService {
         command.add("youtube:player_client=android");
         command.add("-f");
         command.add("18/bestaudio");
+        // Use cookies to bypass bot detection (cookies.txt is bundled in the JAR)
+        command.add("--cookies");
+        command.add("youtube-cookies.txt");
+        // Increase retries for transient failures on Render
+        command.add("--retries");
+        command.add("15");
+        command.add("--fragment-retries");
+        command.add("15");
+        // Add a realistic user-agent
+        command.add("--user-agent");
+        command.add("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
         command.add("-o");
         command.add(outputPath.toAbsolutePath().toString());
         command.add("https://www.youtube.com/watch?v=" + videoId);
@@ -501,19 +512,29 @@ public class YouTubeService {
         log.info("Running: {}", String.join(" ", command));
 
         ProcessBuilder pb = new ProcessBuilder(command);
+        pb.directory(new java.io.File("."));
         pb.redirectErrorStream(true);
         Process p = pb.start();
 
+        StringBuilder ytOutput = new StringBuilder();
         try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 log.info("[yt-dlp] {}: {}", videoId, line);
+                ytOutput.append(line).append("\n");
             }
         }
 
         int exitCode = p.waitFor();
         if (exitCode != 0) {
-            throw new IOException("yt-dlp exited with code " + exitCode);
+            // Extract the most useful error line from yt-dlp output
+            String errorLine = ytOutput.toString().lines()
+                .filter(l -> l.contains("ERROR"))
+                .findFirst()
+                .map(l -> l.replaceAll(".*ERROR:\\s*", ""))
+                .orElse("yt-dlp exited with code " + exitCode);
+            log.warn("yt-dlp failed for {} with exit code {}: {}", videoId, exitCode, errorLine);
+            throw new IOException(errorLine);
         }
 
         if (!Files.exists(outputPath)) {
