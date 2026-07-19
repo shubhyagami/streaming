@@ -428,7 +428,8 @@ public class YouTubeService {
         Path dir = Paths.get(songsDir);
         Files.createDirectories(dir);
 
-        String apiUrl = "https://" + rapidApiDownloadHost + "/dl?id=" + videoId;
+        String apiUrl = "https://" + rapidApiDownloadHost + "/get_mp3_download_link/"
+            + videoId + "?quality=low&wait_until_the_file_is_ready=false";
         log.info("RapidAPI download request: {}", apiUrl);
 
         HttpRequest request = HttpRequest.newBuilder()
@@ -447,21 +448,37 @@ public class YouTubeService {
             return null;
         }
 
-        Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
-        String status = (String) json.get("status");
-        if (!"ok".equals(status)) {
-            log.warn("RapidAPI returned status={}: {}", status, response.body());
-            return null;
+        // Try to extract download link — response could be JSON or plain URL
+        String downloadUrl = null;
+        String body = response.body().trim();
+        
+        // Try parsing as JSON first
+        if (body.startsWith("{")) {
+            try {
+                Map<String, Object> json = mapper.readValue(body, new TypeReference<Map<String, Object>>() {});
+                // Common field names used by different RapidAPI providers
+                downloadUrl = (String) json.get("download_link");
+                if (downloadUrl == null) downloadUrl = (String) json.get("link");
+                if (downloadUrl == null) downloadUrl = (String) json.get("url");
+                if (downloadUrl == null) downloadUrl = (String) json.get("dlink");
+                log.info("Download link from JSON response: {} (title={})", downloadUrl, json.get("title"));
+            } catch (Exception e) {
+                log.warn("Failed to parse RapidAPI JSON response: {}", body);
+            }
         }
-
-        String downloadUrl = (String) json.get("link");
+        
+        // If not JSON or no link found, treat the whole response as a URL
         if (downloadUrl == null || downloadUrl.isBlank()) {
-            log.warn("RapidAPI returned no link in response: {}", response.body());
-            return null;
+            if (body.startsWith("http://") || body.startsWith("https://")) {
+                downloadUrl = body;
+            } else {
+                log.warn("No download link found in response: {}", body);
+                return null;
+            }
         }
 
         Path outputPath = dir.resolve(videoId + ".mp3");
-        log.info("Downloading mp3 from RapidAPI: {} ({} bytes)", json.get("title"), json.get("filesize"));
+        log.info("Downloading mp3 from RapidAPI: {}", downloadUrl);
 
         HttpRequest dlRequest = HttpRequest.newBuilder()
             .uri(URI.create(downloadUrl))
