@@ -456,11 +456,14 @@ public class YouTubeService {
         if (body.startsWith("{")) {
             try {
                 Map<String, Object> json = mapper.readValue(body, new TypeReference<Map<String, Object>>() {});
-                // Common field names used by different RapidAPI providers
-                downloadUrl = (String) json.get("download_link");
-                if (downloadUrl == null) downloadUrl = (String) json.get("link");
-                if (downloadUrl == null) downloadUrl = (String) json.get("url");
-                if (downloadUrl == null) downloadUrl = (String) json.get("dlink");
+                // Try all common field names used by different RapidAPI providers
+                for (String key : new String[]{"download_link", "link", "url", "dlink", "file", "reserved_file"}) {
+                    String val = (String) json.get(key);
+                    if (val != null && !val.isBlank()) {
+                        downloadUrl = val;
+                        break;
+                    }
+                }
                 log.info("Download link from JSON response: {} (title={})", downloadUrl, json.get("title"));
             } catch (Exception e) {
                 log.warn("Failed to parse RapidAPI JSON response: {}", body);
@@ -478,22 +481,32 @@ public class YouTubeService {
         }
 
         Path outputPath = dir.resolve(videoId + ".mp3");
-        log.info("Downloading mp3 from RapidAPI: {}", downloadUrl);
 
-        HttpRequest dlRequest = HttpRequest.newBuilder()
-            .uri(URI.create(downloadUrl))
-            .header("User-Agent", YT_USER_AGENT)
-            .timeout(java.time.Duration.ofMinutes(3))
-            .GET()
-            .build();
+        // The API says file may take 20-300s to be ready. Poll until it responds 200.
+        log.info("Polling RapidAPI download URL: {}", downloadUrl);
+        int retries = 0;
+        int maxRetries = 60; // 5 minutes max (5s * 60)
+        while (retries < maxRetries) {
+            HttpRequest dlRequest = HttpRequest.newBuilder()
+                .uri(URI.create(downloadUrl))
+                .header("User-Agent", YT_USER_AGENT)
+                .timeout(java.time.Duration.ofSeconds(30))
+                .GET()
+                .build();
 
-        HttpResponse<InputStream> dlResponse = httpClient.send(dlRequest, HttpResponse.BodyHandlers.ofInputStream());
-        if (dlResponse.statusCode() != 200) {
-            throw new IOException("RapidAPI download status " + dlResponse.statusCode());
-        }
-
-        try (InputStream in = dlResponse.body()) {
-            Files.copy(in, outputPath, StandardCopyOption.REPLACE_EXISTING);
+            HttpResponse<InputStream> dlResponse = httpClient.send(dlRequest, HttpResponse.BodyHandlers.ofInputStream());
+            if (dlResponse.statusCode() == 200) {
+                try (InputStream in = dlResponse.body()) {
+                    Files.copy(in, outputPath, StandardCopyOption.REPLACE_EXISTING);
+                }
+                break;
+            }
+            retries++;
+            if (retries >= maxRetries) {
+                throw new IOException("RapidAPI download not ready after " + (maxRetries * 5) + " seconds");
+            }
+            log.info("RapidAPI download not ready yet (status {}), retry {}/{} in 5s...", dlResponse.statusCode(), retries, maxRetries);
+            Thread.sleep(5000);
         }
 
         long fileSize = Files.size(outputPath);
@@ -517,13 +530,12 @@ public class YouTubeService {
         List<String> command = new ArrayList<>();
         command.add("yt-dlp");
         // Use android client to bypass PO Token / Bot Protection
+        // Note: --cookies is NOT used because android client doesn't support cookies
         command.add("--extractor-args");
         command.add("youtube:player_client=android");
+        // bestaudio/best: try audio-only first, fallback to any format
         command.add("-f");
-        command.add("18/bestaudio");
-        // Use cookies to bypass bot detection (cookies.txt is bundled in the JAR)
-        command.add("--cookies");
-        command.add("youtube-cookies.txt");
+        command.add("bestaudio/best");
         // Increase retries for transient failures on Render
         command.add("--retries");
         command.add("15");

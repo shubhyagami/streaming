@@ -60,9 +60,9 @@ public class StreamController {
             try { return ytService.downloadAudio(videoId); } catch (Exception e) { throw new RuntimeException(e.getMessage(), e); }
         }).whenComplete((path, ex) -> {
             if (ex != null) {
-                // yt-dlp failed — don't mark error (mp36 might still work for streaming)
-                // Just log it. The entry stays in DOWNLOADING state with directUrl.
-                log.warn("yt-dlp download failed for {} token={}: {}", videoId, token, extractRootCause(ex));
+                String msg = extractRootCause(ex);
+                log.warn("Download failed for {} token={}: {}", videoId, token, msg);
+                tempFileManager.markError(token, msg);
             } else {
                 tempFileManager.markReady(token, path, null);
             }
