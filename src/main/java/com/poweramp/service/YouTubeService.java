@@ -435,20 +435,30 @@ public class YouTubeService {
             .uri(URI.create(apiUrl))
             .header("x-rapidapi-host", rapidApiDownloadHost)
             .header("x-rapidapi-key", rapidApiKey)
+            .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .timeout(java.time.Duration.ofSeconds(30))
             .GET()
             .build();
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) return null;
+        if (response.statusCode() != 200) {
+            log.warn("RapidAPI returned status {}: {}", response.statusCode(), response.body());
+            return null;
+        }
 
         Map<String, Object> json = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
         String status = (String) json.get("status");
-        if (!"ok".equals(status)) return null;
+        if (!"ok".equals(status)) {
+            log.warn("RapidAPI returned status={}: {}", status, response.body());
+            return null;
+        }
 
         String downloadUrl = (String) json.get("link");
-        if (downloadUrl == null || downloadUrl.isBlank()) return null;
+        if (downloadUrl == null || downloadUrl.isBlank()) {
+            log.warn("RapidAPI returned no link in response: {}", response.body());
+            return null;
+        }
 
         Path outputPath = dir.resolve(videoId + ".mp3");
         log.info("Downloading mp3 from RapidAPI: {} ({} bytes)", json.get("title"), json.get("filesize"));
