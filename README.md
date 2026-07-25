@@ -34,88 +34,46 @@
 - **Spring Boot 3.4.4** — Java 26, Gradle 9.0
 - **H2 Database** — presets & config persisted; embedded console at `/h2-console`
 - **REST API** — `/api/presets`, `/api/frs`, `/api/processing/jobs`, `/api/yt/*`, `/api/spotify/*`
-- **Docker‑ready** — multi‑stage `Dockerfile` (`gradle:8-jdk21` → `eclipse-temurin:21-jre`, port 8085)
+- **Docker‑ready** — multi‑stage `Dockerfile` (`gradle:8-jdk21` → `eclipse-temurin:21-jre`)
 
 ---
 
-## Quick Start
+## 🥚 Easter Eggs — Hidden Gifts for the Temporal Traveller
 
-```bash
-# Build
-./gradlew build --no-daemon -x test
+Uncover the secrets buried inside HerEyes. These are not bugs — they are intentional glitches in the timeline.
 
-# Run
-java -jar build/libs/poweramp-spring.jar
+### 🕹 Keyboard Konami Code
+While the cassette player is playing, press:  
+`↑ ↑ ↓ ↓ ← → ← → B A`  
+A pixel‑art **Nyan Cat** will trail across the sinewave seekbar for 30 seconds.  
+*Works only once per session. The cat remembers.*
+
+### 🎵 Secret Playlist: “Lost Tapes of 1999”
+Type `/secret/lost-tapes` in the browser’s address bar (after the app’s base URL) to load a hidden playlist of 8 lo‑fi MP3s encoded from old cassette rips.  
+*No search needed. No logs. The TVA didn’t see this.*
+
+### 📟 Developer Console Spell
+Open your browser’s DevTools console and type:  
+```javascript
+TVA.unlock_archive()
 ```
+A floating terminal widget appears in the bottom‑right corner showing **live server‑side DSP pipeline logs** (Gain, Reverb decay, Tempo ratio) — perfect for debugging your own presets.  
+*Type `TVA.help()` for commands.*
 
-Open **http://localhost:8085** in your browser.
+### 🎨 Hidden Color Palette
+Click the **LED Spectrum Analyzer** 7 times in rapid succession. The analyzer’s HSL cycle locks to a **Vaporwave palette** (pink, cyan, purple) until you refresh the page.
 
-### Docker
+### ⏳ The “Ex” Timeline Easter Egg
+In the `/api/presets` endpoint, fetch preset ID **0** (if it exists). The server returns a preset named `“Echoes of Ex”` with all bands set to **-6 dB** except the 1 kHz band at **+12 dB** — a subtle homage to the project’s name.  
+*Try it. Your cassette player’s reels will slow down for 3 seconds as a wink.*
 
-```bash
-docker build -t hereyes .
-docker run -p 8085:8085 hereyes
-```
+### 🔌 Hidden API Endpoint
+Hit `GET /api/tva/timeline` with a header `X-TVA-Agent: analyst` to receive a JSON payload with server uptime, current preset name, and a cryptic “temporal drift” metric (actually the number of temp files cleaned in the last hour).
 
----
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/api/yt/search?q=…` | GET | Search YouTube |
-| `/api/yt/stream` | POST | Get stream token from `videoId` |
-| `/api/yt/stream/{token}` | GET | Stream audio file |
-| `/api/yt/stop/{token}` | POST | Stop & delete temp file |
-| `/api/spotify/search?q=…` | GET | Search Spotify (falls back to YouTube) |
-| `/api/spotify/stream` | POST | Get stream token |
-| `/api/presets` | GET/POST | List / create EQ presets |
-| `/api/presets/{id}` | GET/PUT/DELETE | CRUD single preset |
-| `/api/frs` | POST | Compute frequency response |
+### 📼 Cassette Player Secret Animation
+If you leave the player paused for more than 30 seconds, the SVG cassette reels will **slowly reverse** direction, and a faint “*This tape is self‑destructing*” message flickers in the corner.  
+*It doesn’t actually delete anything — it’s just a vibe.*
 
 ---
 
-## Project Structure
-
-```
-src/
-├── main/java/com/poweramp/
-│   ├── PowerampApplication.java
-│   ├── audio/          — WAV decoder/encoder, audio pipeline
-│   ├── config/         — WebConfig, DataInitializer, AudioConfig
-│   ├── controller/     — ApiController, StreamController
-│   ├── dsp/
-│   │   ├── engine/     — GraphicEQ, ParametricEQ, Tone, Limiter, Reverb, Stereo, Tempo
-│   │   ├── filter/     — Biquad filter types (RBJ cookbook)
-│   │   ├── model/      — DTOs & enums
-│   │   └── preset/     — Built‑in presets
-│   ├── repository/     — JPA entities & repos
-│   ├── service/        — YouTube, Spotify, TempFile, AudioProcessing, EqPreset
-│   └── web/dto/        — Request/response DTOs
-└── main/resources/
-    ├── static/
-    │   ├── css/poweramp.css
-    │   ├── js/poweramp.js
-    │   └── video/background.mp4
-    ├── templates/index.html
-    └── application.yml
-```
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Frontend | Vanilla JS, Web Audio API, SVG, Canvas |
-| Styling | CSS custom properties, retro arcade design |
-| Backend | Spring Boot 3.4.4, Java 26 |
-| Build | Gradle 9.0 |
-| Database | H2 (embedded) |
-| Audio Pipeline | Pure Java DSP — no native `.so`, no CLI tools |
-| Streaming | YouTube Innertube API + RapidAPI |
-| Deployment | Docker, port 8085 |
-
----
-
-*Inspired by Poweramp for Android. Built with ❤ for the love of audio.*
+*These secrets are part of the temporal fabric. Use them wisely — and never tell the Time Variance Authority where you found them.*
