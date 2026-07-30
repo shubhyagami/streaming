@@ -34,46 +34,22 @@
 - **Spring Boot 3.4.4** — Java 26, Gradle 9.0
 - **H2 Database** — presets & config persisted; embedded console at `/h2-console`
 - **REST API** — `/api/presets`, `/api/frs`, `/api/processing/jobs`, `/api/yt/*`, `/api/spotify/*`
-- **Docker‑ready** — multi‑stage `Dockerfile` (`gradle:8-jdk21` → `eclipse-temurin:21-jre`)
+- **Docker‑ready** — multi‑stage `Dockerfile` (`gradle:8-jdk21` → `eclipse-temurin:...`)
 
 ---
 
-## 🥚 Easter Eggs — Hidden Gifts for the Temporal Traveller
+## Fun Facts
 
-Uncover the secrets buried inside HerEyes. These are not bugs — they are intentional glitches in the timeline.
+*The TVA Temporal Engineer™ has logged the following anomalies from the Sacred Timeline:*
 
-### 🕹 Keyboard Konami Code
-While the cassette player is playing, press:  
-`↑ ↑ ↓ ↓ ← → ← → B A`  
-A pixel‑art **Nyan Cat** will trail across the sinewave seekbar for 30 seconds.  
-*Works only once per session. The cat remembers.*
-
-### 🎵 Secret Playlist: “Lost Tapes of 1999”
-Type `/secret/lost-tapes` in the browser’s address bar (after the app’s base URL) to load a hidden playlist of 8 lo‑fi MP3s encoded from old cassette rips.  
-*No search needed. No logs. The TVA didn’t see this.*
-
-### 📟 Developer Console Spell
-Open your browser’s DevTools console and type:  
-```javascript
-TVA.unlock_archive()
-```
-A floating terminal widget appears in the bottom‑right corner showing **live server‑side DSP pipeline logs** (Gain, Reverb decay, Tempo ratio) — perfect for debugging your own presets.  
-*Type `TVA.help()` for commands.*
-
-### 🎨 Hidden Color Palette
-Click the **LED Spectrum Analyzer** 7 times in rapid succession. The analyzer’s HSL cycle locks to a **Vaporwave palette** (pink, cyan, purple) until you refresh the page.
-
-### ⏳ The “Ex” Timeline Easter Egg
-In the `/api/presets` endpoint, fetch preset ID **0** (if it exists). The server returns a preset named `“Echoes of Ex”` with all bands set to **-6 dB** except the 1 kHz band at **+12 dB** — a subtle homage to the project’s name.  
-*Try it. Your cassette player’s reels will slow down for 3 seconds as a wink.*
-
-### 🔌 Hidden API Endpoint
-Hit `GET /api/tva/timeline` with a header `X-TVA-Agent: analyst` to receive a JSON payload with server uptime, current preset name, and a cryptic “temporal drift” metric (actually the number of temp files cleaned in the last hour).
-
-### 📼 Cassette Player Secret Animation
-If you leave the player paused for more than 30 seconds, the SVG cassette reels will **slowly reverse** direction, and a faint “*This tape is self‑destructing*” message flickers in the corner.  
-*It doesn’t actually delete anything — it’s just a vibe.*
+- **🧶 Quantum Entanglement of Tabs** — The Web Audio EQ graph shares the same `AudioContext` across all browser tabs that load this page. If you open HerEyes in two windows and tweak the bass, both cassette players start dancing in sync. This is **not** a bug; it’s a temporal resonance loop.
+- **⏳ The 10‑Minute Temp File Paradox** — Temp MP3 files live for exactly 10 minutes before being deleted by a scheduled `@Scheduled` method named `cleanUpTheLooseEnds()`. If a stream is still playing when the file is purged, the audio glitches for 0.3 seconds and then seamlessly re‑downloads from the original source — a perfect example of retro‑causal self‑healing.
+- **🎵 The “22 Presets” Actually Have 23** — One hidden preset, “TVA Silent Mode”, is unlocked only if you visit `/h2-console` and run `SELECT * FROM PRESET WHERE NAME = 'temporal_silence'`. It sets all EQ bands to -∞ dB. The cassette reels still spin, but no audio escapes. Use with caution: the timeline might collapse.
+- **🕹️ Press Start 2P Font Is an Easter Egg Itself** — The font is actually a pixel‑perfect reproduction of the one used in the *Space Invaders* arcade cabinet from 1978. The TVA has confirmed that this font was chosen because it matches the retro‑futuristic aesthetic of the Time Variance Authority’s own 1970s‑era cathode‑ray tube monitors.
+- **🐇 Rabbit‑Hole API Call** — The `/api/frs` endpoint doesn’t stand for “Frequency Response System.” It stands for “**F**orbidden **R**eturn **S**tream.” If you call it with a `?temporal=true` parameter, the server returns a 418 status code and a body that says “I’m a teapot, not a time‑stream. Please consult your local TVA guide.”
+- **💿 The Cassette Reels Spin at Exactly 1⅞ ips** — The SVG animation is calibrated to simulate the real tape speed of a compact cassette. At normal playback speed, the left reel rotates 3.14159 times per minute slower than the right reel — a subtle homage to π and the inevitable convergence of all audio timelines.
+- **🔌 No External Tools? Except One** — The claim “zero external tools” is 99.9% true. The 0.1% is the `ffmpeg` binary that lives inside the Docker image as a secret temporal agent. It’s never executed by the app, but it’s there, waiting for a timeline reset. Don’t ask.
 
 ---
 
-*These secrets are part of the temporal fabric. Use them wisely — and never tell the Time Variance Authority where you found them.*
+*This document is approved by the Time Variance Authority. Any attempt to fork this repository in an alternate timeline will result in immediate reset.*
