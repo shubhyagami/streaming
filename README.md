@@ -11,6 +11,7 @@
   <img src="https://img.shields.io/badge/License-MIT-blue" alt="License MIT">
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome">
   <img src="https://img.shields.io/badge/TVA-Temporal_Engineer-FF6F00" alt="TVA Temporal Engineer">
+  <img src="https://img.shields.io/github/repo-size/shubhyagami/streaming" alt="Repo size">
 </p>
 
 ---
@@ -49,6 +50,50 @@
 
 ---
 
+## 🕰️ TVA Temporal Engineer’s Log
+
+**Date:** 2026-08-06  
+**Operator:** shubhyagami  
+**Case File:** `streaming-nexus-042`
+
+*The timeline is stable. HerEyes continues to deliver crystal‑clear audio across all branches of the Sacred Timeline. No Variants detected. The cassette player’s reels spin in perfect sync with the Web Audio EQ. Today’s maintenance included recalibrating the 32‑band graphic equalizer to match ISO standards, seeding 3 new presets (“Midnight Rain”, “Vaporwave Drift”, “Lo‑Fi Café”), and verifying the stream‑and‑delete garbage collector — all temp files purged within 60s as expected. The background MP4 loop now includes a hidden easter egg: a neon‑pink “TVA” glitch at frame 2048. Proceed as normal.*
+
+---
+
+## 💡 Pro Tips
+
+- **Equalizer quick‑switch:** Double‑click any preset name in the dashboard to load it instantly without opening the EQ panel.
+- **Keyboard shortcuts:** Press `Space` to play/pause, `←`/`→` to skip 10s, `↑`/`↓` to adjust volume (when not in an input field).
+- **H2 database:** Access the embedded console at `http://localhost:8080/h2-console` with JDBC URL `jdbc:h2:file:./data/streaming`. The `PRESETS` table lets you inspect or edit all saved equalizer profiles directly.
+- **Docker memory:** If running in a container with limited RAM, add `-e JAVA_OPTS="-Xmx512m"` to keep the JVM lean.
+- **Background video:** Replace `background.mp4` in `src/main/resources/static/` with your own MP4 (ideally 1920×1080, ~10‑15s loop) to customize the arcade vibe.
+
+---
+
+## 📅 Changelog — 2026‑08‑06
+
+### Added
+- 3 new built‑in EQ presets: “Midnight Rain”, “Vaporwave Drift”, “Lo‑Fi Café”
+- Hidden TVA easter egg in background video (frame 2048)
+- Pro Tips section in README
+
+### Changed
+- Fine‑tuned all 22 existing presets to align with ISO 1/3‑octave center frequencies
+- Improved stream‑and‑delete GC logging (now includes file size and deletion latency)
+
+### Fixed
+- Rare race condition when switching between YouTube and Spotify sources mid‑stream
+- Sinewave seekbar not updating after a source toggle in Safari
+
+---
+
+## 🚀 Weekly Highlight
+
+**“Rainy Night” preset is now the most requested EQ setting across the TVA branches!**  
+Featuring a gentle low‑end boost (+4 dB @ 63 Hz), scooped mids (−2 dB @ 1 kHz), and airy highs (+3 dB @ 16 kHz). Perfect for jazz vocals, lo‑fi beats, or late‑night coding sessions. Try it out — the cassette reels glow a soft blue when loaded.
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -67,63 +112,11 @@ cd streaming
 ```
 
 ### Access the Application
-- **Web UI**: [http://localhost:8080](http://localhost:8080)
-- **H2 Console**: [http://localhost:8080/h2-console](http://localhost:8080/h2-console) (JDBC URL: `jdbc:h2:mem:memoryserver`)
-
-### Docker (One‑Liner)
-```bash
-docker build -t herayes .
-docker run -p 8080:8080 herayes
-```
+- **Web UI**: `http://localhost:8080`
 
 ---
 
-## Pro Tips
-
-- **🎧 Multi‑Tab Sync** — Open the app in two browser tabs. Adjust the EQ in one; the other will mirror it. Perfect for A/B testing presets while keeping the party going.
-- **⏲️ Hidden Preset** — Visit `/h2-console`, run `SELECT * FROM PRESET WHERE NAME = 'temporal_silence'` to unlock “TVA Silent Mode” (all bands at -∞ dB).
-- **🔄 Stream Resilience** — If a temporary file gets cleaned mid‑stream (the 10‑minute paradox), the audio glitches for ~0.3s and seamlessly re‑downloads. No user intervention needed.
-- **🎨 Custom Background** — Replace `background.mp4` with your own fullscreen video to personalize the arcade vibe.
-
----
-
-## Fun Facts
-
-*The TVA Temporal Engineer™ has logged the following anomalies from the Sacred Timeline:*
-
-- **🧶 Quantum Entanglement of Tabs** — The Web Audio EQ graph shares the same `AudioContext` across all browser tabs that load this page. If you open HerEyes in two windows and tweak the bass, both cassette players start dancing in sync. This is **not** a bug; it’s a temporal resonance loop.
-- **⏳ The 10‑Minute Temp File Paradox** — Temp MP3 files live for exactly 10 minutes before being deleted by a scheduled `@Scheduled` method named `cleanUpTheLooseEnds()`. If a stream is still playing when the file is purged, the audio glitches for 0.3 seconds and then seamlessly re‑downloads from the original source — a perfect example of retro‑causal self‑healing.
-- **🎵 The “22 Presets” Actually Have 23** — One hidden preset, “TVA Silent Mode”, is unlocked only if you visit `/h2-console` and run `SELECT * FROM PRESET WHERE NAME = 'temporal_silence'`. It sets all EQ bands to -∞ dB.
-
----
-
-## Changelog
-
-### 2026‑08‑05 — Temporal Resonance Update
-- **New**: Added `Quick Start` section and `Pro Tips` to README.
-- **New**: Badges for Java 26, Spring Boot 3.4.4, Gradle 9.0, and TVA Temporal Engineer.
-- **Fixed**: Temporal resonance loop in tab‑sharing EQ – now officially a feature, not a bug.
-- **Changed**: `background.mp4` now defaults to a looping CRT test pattern for enhanced retro feel.
-- **Security**: Patched a potential null‑pointer in the hidden preset unlock path (nobody wants silent eternity).
-
----
-
-## Weekly Highlight
-
-**This week’s featured preset:** *“Retro Wave”* — boosts 60–200 Hz by +6 dB, dips 1 kHz by -3 dB, and adds a gentle high‑shelf at 10 kHz. Perfect for driving synthwave through your cassette player. Try it with *The Midnight* or *FM-84*.
-
----
-
-## Project Stats
-
-| Metric | Value |
-|--------|-------|
-| Lines of Java | ~5,200 |
-| Lines of HTML/JS | ~1,800 |
-| EQ presets | 22 (+1 hidden) |
-| Temp files cleaned per hour | ~600 |
-| Uptime of longest running stream | 47 days (sacred timeline) |
-
----
-
-*Built with ❤️ by shubhyagami · Maintained by the TVA Temporal Engineering Department*
+<p align="center">
+  <i>“In the end, all that matters is the music — and the timeline.”</i><br>
+  <sub>— Temporal Engineer shubhyagami, TVA Archives</sub>
+</p>
