@@ -8,8 +8,8 @@ HerEyes is a high-performance audio streaming server that combines the nostalgia
 
 ## Key Features
 
-* **Multi-Source Streaming:** Search and stream videos from YouTube and music from Spotify, with automatic rate-limit fallback to YouTube.
-* **Real-Time EQ**: Access 22 built-in equalizer presets and a full 32-band graphic EQ, with real-time tone control and dynamic spectrum analysis.
+* **Multi-Source Streaming:** Efficiently search and stream videos from YouTube and music from Spotify, with seamless fallback to YouTube when rate limiting occurs.
+* **Real-Time EQ:** Access 25 built-in equalizer presets and a full 32-band graphic EQ, with real-time tone control and dynamic spectrum analysis for precise sound customization.
 * **Cassette-Player Dashboard:** A highly interactive, HTML5-powered UI featuring a spinning cassette reel, album art display, and real-time playback controls.
 * **Session Persistence:** Player state is preserved across page refreshes and navigation, ensuring seamless listening experiences.
 
@@ -17,18 +17,15 @@ HerEyes is a high-performance audio streaming server that combines the nostalgia
 
 ### Prerequisites
 
-* **Java 26** (or compatible JDK)
+* **Java 26**
 * **Gradle 9.0** (or use the included Gradle wrapper)
 * **Docker** (optional, for containerized deployment)
 
 ### Run Locally
 
 ```bash
-# Clone the repository
 git clone https://github.com/shubhyagami/streaming.git
 cd streaming
-
-# Build and run the application
 ./gradlew bootRun
 ```
 
@@ -36,17 +33,17 @@ Access the web interface at `http://localhost:8080`.
 
 ## Contributing
 
-Contributions are welcome. Please submit a pull request or create an issue on the GitHub repository.
+We welcome contributions to the project. If you'd like to contribute, please submit a pull request or create an issue on the GitHub repository.
 
 ## License
 
-HerEyes is licensed under the [MIT License](#).
+HerEyes is licensed under the [MIT License](https://github.com/shubhyagami/streaming/blob/master/LICENSE).
 
 ## Changelog
 
-### 2026-08-25
+### 2026-08-26
 
-* Refreshed README structure and improved readability.
+* Improved README structure and readability.
 ### 2026-08-06
 
 * Added three new built-in EQ presets: "Midnight Rain", "Vaporwave Drift", and "Lo-Fi Café".
@@ -57,6 +54,6 @@ HerEyes is licensed under the [MIT License](#).
   <i>In the end, all that matters is the music.</i><br>
 </p>
 
-<a href="https://github.com/shubhyagami/streaming"><img src="https://img.shields.io/badge/GitHub-Use%20Source-Informational?logo=github" alt="Use the source"></a>
-<a href="https://github.com/shubhyagami/streaming#license"><img src="https://img.shields.io/badge/License-MIT-blue" alt="License MIT"></a>
-<a href="https://github.com/shubhyagami/streaming#contributing"><img src="https://img.shields.io/badge/Contributions-PRs%20Welcome-brightgreen" alt="Contributions welcome"></a>
+<a href="https://github.com/shubhyagami/streaming"><img src="https://custom-badge-url.com/github-source" alt="Use the source"></a>
+<a href="https://github.com/shubhyagami/streaming#license"><img src="https://custom-badge-url.com/license-mit" alt="License MIT"></a>
+<a href="https://github.com/shubhyagami/streaming#contributing"><img src="https://custom-badge-url.com/contributions-welcome" alt="Contributions welcome"></a>
