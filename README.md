@@ -1,6 +1,6 @@
 # HerEyes: Memory Server of Ex  
 
-A retro‑arcade styled audio streaming server that mixes nostalgic visual design with modern features—YouTube and Spotify search, real‑time Web Audio equalization, and a cassette‑player styled UI.  
+A retro‑arcade‑styled audio streaming server that blends nostalgic visual design with modern features—YouTube and Spotify search, real‑time Web Audio equalization, and a cassette‑player UI.
 
 ---  
 
@@ -14,7 +14,7 @@ A retro‑arcade styled audio streaming server that mixes nostalgic visual desig
 
 ## Badges  
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)  
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/shubhyagami/streaming/actions)  
+[![Build Status](https://img.shields.io/github/actions/workflow/status/shubhyagami/streaming/ci.yml?branch=main&label=build)](https://github.com/shubhyagami/streaming/actions)  
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](https://github.com/shubhyagami/streaming/issues)  
 [![Docker Pulls](https://img.shields.io/docker/pulls/shubhyagami/streaming.svg)](https://hub.docker.com/r/shubhyagami/streaming)  
 
@@ -23,16 +23,16 @@ A retro‑arcade styled audio streaming server that mixes nostalgic visual desig
 ## Getting Started  
 
 ### Prerequisites  
-- **Java 26**  
-- **Gradle 9.0** (or use the Gradle wrapper)  
-- **Docker** (optional, for container deployment)  
+- Java 26  
+- Gradle 9.0 (or use the provided Gradle wrapper)  
+- Docker (optional, for container deployment)  
 
 ### Run Locally  
 ```bash
 git clone https://github.com/shubhyagami/streaming.git
 cd streaming
 ./gradlew bootRun
-```
+```  
 Open your browser at `http://localhost:8080`.  
 
 ### Docker  
@@ -54,7 +54,7 @@ HerEyes is released under the **MIT License**—see the [LICENSE](LICENSE) file 
 ---  
 
 ## Changelog  
-- **2026‑08‑29** – Refined README structure, clarified documentation, and removed stale sections.  
+- **2026‑08‑29** – Refined README structure, clarified documentation, and removed outdated sections.  
 - **2026‑08‑26** – Clarified documentation and polished README organization.  
 - **2026‑08‑06** – Added three new EQ presets (*Midnight Rain*, *Vaporwave Drift*, *Lo‑Fi Café*).  
   Optimized all 22 existing presets to match ISO 1/3‑octave center frequencies.  
