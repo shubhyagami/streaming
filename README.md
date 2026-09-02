@@ -2,93 +2,96 @@
 
 A lightweight Spring Boot application that streams music from YouTube and Spotify, renders a cassette‑player style UI, and lets you tweak the sound in real time with a 32‑band graphic equalizer.  
 
----
+---  
+
+## Overview  
+
+* Play audio from both **YouTube** and **Spotify**.  
+* If a Spotify request fails, the server automatically falls back to a YouTube search.  
+* The front‑end mimics a classic cassette player: spinning reel, album art, and an on‑screen equalizer.  
+* The player state (current track, position, and EQ settings) is saved in local storage, so reloading the page restores playback seamlessly.  
+
+---  
 
 ## Features  
 
-| Feature | Details |
-|---------|---------|
-| **Multi‑source playback** | Search YouTube or Spotify; falls back to YouTube when Spotify’s API rate limit is hit. |
-| **Real‑time equalizer** | 25 ready‑made presets plus a 32‑band graphical EQ with live spectrum display. |
-| **Cassette‑player UI** | HTML5 front‑end with spinning reel, album art, and intuitive controls. |
-| **Session persistence** | Player state is stored in local storage so it survives page refreshes and navigation changes. |
+- **Multi‑source playback** – search and play from YouTube or Spotify; automatic fallback on API limits.  
+- **Real‑time equalizer** – 25 presets + a 32‑band graphic EQ with live spectrum display.  
+- **Cassette‑player UI** – HTML5 + vanilla JavaScript with CSS animations.  
+- **Session persistence** – local storage keeps track and EQ state across page reloads.  
 
----
+---  
 
 ## Tech Stack  
 
-* Java 26 + Spring Boot 3  
-* Gradle 9 (wrapper included)  
-* Docker (containerized deployment)  
-* Front‑end: vanilla JS, Web Audio API, CSS animations  
+- **Java 26** + **Spring Boot 3**  
+- **Gradle 9** (wrapper included)  
+- **Docker** for containerised deployment  
+- Front‑end: vanilla JS, Web Audio API, CSS animations  
 
----
+---  
 
-## Installation  
+## Quick Start  
 
-### 1. Clone & Build  
+Clone the repository, build, and run:  
 
-```bash
+```
 git clone https://github.com/shubhyagami/streaming.git
 cd streaming
 ./gradlew build
-```  
-
-### 2. Run Locally  
-
-```bash
 ./gradlew bootRun
 ```
 
-Open your browser at `http://localhost:8080`.  
+Open `http://localhost:8080` in your browser.  
 
-### 3. Docker (optional)  
+---  
+
+## Docker (optional)  
 
 ```bash
 docker build -t hereyes/streaming .
 docker run -p 8080:8080 hereyes/streaming
-```
+```  
 
----
+---  
 
 ## Usage  
 
-1. **Search** – Type a query into the search bar.  
-2. **Play** – Click the resulting track; the UI shows the album art and starts playback.  
-3. **Equalize** – Choose a preset or adjust the sliders.  
-4. **Persist** – Refresh the page and your current track + EQ settings will be restored automatically.  
+1. **Search** – type a query into the search bar.  
+2. **Play** – click a result; the UI shows album art and starts playback.  
+3. **Equalize** – select a preset or adjust the sliders.  
+4. **Persist** – refresh the page and the current track + EQ settings will load automatically.  
 
----
+---  
 
 ## Badges  
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)  
-[![Build Status](https://img.shields.io/github/actions/workflow/status/shubhyagami/streaming/ci.yml?branch=main&label=build)](https://github.com/shubhyagami/streaming/actions)  
+[![CI](https://img.shields.io/github/actions/workflow/status/shubhyagami/streaming/ci.yml?branch=main&label=build)](https://github.com/shubhyagami/streaming/actions)  
 [![Docker Pulls](https://img.shields.io/docker/pulls/hereyes/streaming.svg)](https://hub.docker.com/r/hereyes/streaming)  
-[![Contributions](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](https://github.com/shubhyagami/streaming/issues)
+[![Issues](https://img.shields.io/github/issues/shubhyagami/streaming.svg)](https://github.com/shubhyagami/streaming/issues)  
 
----
+---  
 
 ## Contributing  
 
-Pull requests are welcome! If you’d like to add a feature or fix a bug, open an issue first so we can discuss it.  
+Pull requests are welcome! Please follow these guidelines:  
 
-### Checklist  
-- [ ] Tests pass (`./gradlew test`)  
-- [ ] Code follows style guidelines  
-- [ ] Update docs if necessary  
+1. Open an issue first to discuss the change.  
+2. Fork the repository and checkout a feature branch.  
+3. Write tests – run `./gradlew test` to verify.  
+4. Ensure code follows the existing style guidelines.  
+5. Update documentation if necessary.  
 
----
+---  
 
 ## License  
 
-HerEyes is available under the MIT License – see the [LICENSE](LICENSE) file for details.  
+HerEyes is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.  
 
----
+---  
 
 ## Changelog  
 
-**2026‑08‑29** – Cleaned up README, reorganized sections, removed stale content.  
-**2026‑08‑06** – Added three new EQ presets (*Midnight Rain*, *Vaporwave Drift*, *Lo‑Fi Café*), optimized existing presets, and improved GC logging.  
-
----
+**2026‑08‑29** – Initial release, cleaned up README, added Docker support.  
+**2026‑08‑06** – Added three new EQ presets, optimized GC logs.  
