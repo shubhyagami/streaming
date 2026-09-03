@@ -1,97 +1,102 @@
-# HerEyes – Retro‑Arcade Audio Streaming Server  
+# HerEyes – Retro‑Arcade Audio Streaming Server
 
-A lightweight Spring Boot application that streams music from YouTube and Spotify, renders a cassette‑player style UI, and lets you tweak the sound in real time with a 32‑band graphic equalizer.  
+A lightweight Spring Boot application that streams audio from **YouTube** and **Spotify**, displays a cassette‑player style UI, and lets you tweak the sound in real time with a 32‑band graphic equalizer.
 
----  
+---
 
-## Overview  
+## Overview
 
-* Play audio from both **YouTube** and **Spotify**.  
-* If a Spotify request fails, the server automatically falls back to a YouTube search.  
-* The front‑end mimics a classic cassette player: spinning reel, album art, and an on‑screen equalizer.  
-* The player state (current track, position, and EQ settings) is saved in local storage, so reloading the page restores playback seamlessly.  
+* Play tracks from YouTube or Spotify.
+* Automatic fallback to YouTube when a Spotify request fails.
+* Cassette‑player UI with spinning reel, album art, and an on‑screen equalizer.
+* Player state (current track, position, EQ settings) is persisted in local storage for a seamless reload.
 
----  
+---
 
-## Features  
+## Features
 
-- **Multi‑source playback** – search and play from YouTube or Spotify; automatic fallback on API limits.  
-- **Real‑time equalizer** – 25 presets + a 32‑band graphic EQ with live spectrum display.  
-- **Cassette‑player UI** – HTML5 + vanilla JavaScript with CSS animations.  
-- **Session persistence** – local storage keeps track and EQ state across page reloads.  
+| Feature | Description |
+|---------|-------------|
+| **Multi‑source playback** | Search and play from YouTube or Spotify; fallback on API limits. |
+| **Real‑time equalizer** | 25 presets + 32‑band graphic EQ with live spectrum display. |
+| **Cassette‑player UI** | Classic look built with vanilla JS, Web Audio API, and CSS animations. |
+| **Session persistence** | State stored in local storage; restores after page reload. |
 
----  
+---
 
-## Tech Stack  
+## Tech Stack
 
-- **Java 26** + **Spring Boot 3**  
-- **Gradle 9** (wrapper included)  
-- **Docker** for containerised deployment  
-- Front‑end: vanilla JS, Web Audio API, CSS animations  
+* **Java 26** + **Spring Boot 3**
+* **Gradle 9** (wrapper provided)
+* **Docker** for containerised deployment
+* Front‑end: vanilla JavaScript, Web Audio API, CSS animations
 
----  
+---
 
-## Quick Start  
+## Getting Started
 
-Clone the repository, build, and run:  
+### Prerequisites
 
-```
+* Java 26 (or higher)
+* Gradle 9 (or use the wrapper)
+* Docker (optional)
+
+### Install
+
+```bash
 git clone https://github.com/shubhyagami/streaming.git
 cd streaming
 ./gradlew build
 ./gradlew bootRun
 ```
 
-Open `http://localhost:8080` in your browser.  
+Open `http://localhost:8080` in your browser.
 
----  
-
-## Docker (optional)  
+### Docker
 
 ```bash
 docker build -t hereyes/streaming .
 docker run -p 8080:8080 hereyes/streaming
-```  
+```
 
----  
+---
 
-## Usage  
+## Usage
 
 1. **Search** – type a query into the search bar.  
 2. **Play** – click a result; the UI shows album art and starts playback.  
 3. **Equalize** – select a preset or adjust the sliders.  
-4. **Persist** – refresh the page and the current track + EQ settings will load automatically.  
+4. **Persist** – refresh the page; the current track and EQ settings load automatically.
 
----  
+---
 
-## Badges  
+## Contributing
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)  
+Pull requests are welcome.  
+1. Open an issue to discuss a change.  
+2. Fork the repository and create a feature branch.  
+3. Add tests; run `./gradlew test` to verify.  
+4. Follow existing style guidelines.  
+5. Update documentation if needed.
+
+---
+
+## License
+
+HerEyes is licensed under the [MIT License](LICENSE).
+
+---
+
+## Changelog
+
+- **2026‑08‑29** – Initial release, added Docker support.  
+- **2026‑08‑06** – Added three new EQ presets, optimized GC logs.
+
+---
+
+## Badges
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)  
 [![CI](https://img.shields.io/github/actions/workflow/status/shubhyagami/streaming/ci.yml?branch=main&label=build)](https://github.com/shubhyagami/streaming/actions)  
 [![Docker Pulls](https://img.shields.io/docker/pulls/hereyes/streaming.svg)](https://hub.docker.com/r/hereyes/streaming)  
-[![Issues](https://img.shields.io/github/issues/shubhyagami/streaming.svg)](https://github.com/shubhyagami/streaming/issues)  
-
----  
-
-## Contributing  
-
-Pull requests are welcome! Please follow these guidelines:  
-
-1. Open an issue first to discuss the change.  
-2. Fork the repository and checkout a feature branch.  
-3. Write tests – run `./gradlew test` to verify.  
-4. Ensure code follows the existing style guidelines.  
-5. Update documentation if necessary.  
-
----  
-
-## License  
-
-HerEyes is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.  
-
----  
-
-## Changelog  
-
-**2026‑08‑29** – Initial release, cleaned up README, added Docker support.  
-**2026‑08‑06** – Added three new EQ presets, optimized GC logs.  
+[![Issues](https://img.shields.io/github/issues/shubhyagami/streaming.svg)](https://github.com/shubhyagami/streaming/issues)
