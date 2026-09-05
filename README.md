@@ -13,26 +13,28 @@ The front‑end, built with vanilla JavaScript, the Web Audio API, and CSS
 | Docker image | <https://hub.docker.com/r/hereyes/streaming> |
 | CI status | <https://github.com/shubhyagami/streaming/actions> |
 | Issues | <https://github.com/shubhyagami/streaming/issues> |
-| API docs | *link if available* |
+| API docs | <https://github.com/shubhyagami/streaming/blob/main/docs/api.md> |
 
 ---
 
 ## Features
 
-- **Multi‑source playback** – search and play from YouTube or Spotify. A YouTube fallback kicks in when a Spotify request fails or the quota is exceeded.  
-- **Real‑time equalizer** – 25 presets plus a 32‑band graphic EQ that updates live.  
-- **Retro UI** – spinning cassette reel, album art, animated equalizer.  
-- **Session persistence** – track, position, and EQ settings are restored after a page reload.
+| Feature | Description |
+|---|---|
+| **Multi‑source playback** | Search and play from YouTube or Spotify, with a YouTube fallback when Spotify fails or the quota is exceeded. |
+| **Real‑time equalizer** | 25 presets plus a 32‑band graphic EQ that updates live. |
+| **Retro UI** | Spinning cassette reel, animated equalizer, off‑screen album art. |
+| **Session persistence** | Track, position, and EQ settings are restored after a page reload. |
 
 ---
 
 ## Tech stack
 
 | Layer | Technology |
-|-------|------------|
+|---|---|
 | Backend | Java 26, Spring Boot 3, Gradle 9 |
 | Container | Docker |
-| Front‑end | Vanilla JavaScript, Web Audio API, CSS |
+| Front‑end | Vanilla JavaScript, Web Audio API, CSS |
 | CI | GitHub Actions |
 | VCS | Git |
 
@@ -45,7 +47,7 @@ The front‑end, built with vanilla JavaScript, the Web Audio API, and CSS
 > - Gradle 9 (or the Gradle wrapper)  
 > - Docker (optional, for containerised deployment)
 
-### Clone & run locally
+### Clone and run locally
 
 ```bash
 git clone https://github.com/shubhyagami/streaming.git
@@ -99,13 +101,13 @@ docker run -p 8080:8080 hereyes/streaming
 
 ## Contributing
 
-1. Fork the repo and create a feature branch.  
-2. Add tests that exercise your changes.  
-3. Run locally with `./gradlew test`.  
+1. Fork the repository and create a feature branch.  
+2. Add tests covering your changes.  
+3. Ensure all checks pass locally (`./gradlew check`).  
 4. Open a pull request against `main`.  
-5. Keep commits focused and follow the commit‑style guidelines.  
+5. Keep commits focused and follow the commit‑style guidelines.
 
-See `CONTRIBUTING.md` for more detail.
+See `CONTRIBUTING.md` for additional details.
 
 ---
 
@@ -118,7 +120,7 @@ HerEyes is released under the MIT License. See the [LICENSE](LICENSE) file.
 ## Changelog
 
 | Version | Date | Notes |
-|---------|------|-------|
+|---|---|---|
 | **1.0.0** | 2026‑08‑29 | Initial release, Docker support |
 | 0.9.0 | 2026‑08‑06 | Added three new EQ presets, optimized GC logs |
 | 0.8.0 | 2026‑07‑22 | Refactored source selection logic |
