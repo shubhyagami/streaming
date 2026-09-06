@@ -1,51 +1,44 @@
-# HerEyes – Retro‑Arcade Audio Streaming Server
+# HerEyes – Audio Streaming Server
 
 HerEyes is a lightweight Spring Boot backend that streams audio from **YouTube** and **Spotify**.  
-The front‑end, built with vanilla JavaScript, the Web Audio API, and CSS, mimics a cassette player: a spinning reel, an animated 32‑band equalizer, and album art displayed off‑screen. Player state (track, position, EQ) is persisted to `localStorage`, so you resume exactly where you left off.
+A small vanilla‑JavaScript front‑end reproduces a cassette player: a spinning reel, a 32‑band equalizer, and album art shown off‑screen.  
+Player state (track, position, EQ) is stored in `localStorage`, so you resume precisely where you left off.
 
 ---
 
 ## Quick links
-
-| Resource | URL |
-|----------|-----|
-| Repository | <https://github.com/shubhyagami/streaming> |
-| Docker image | <https://hub.docker.com/r/hereyes/streaming> |
-| CI status | <https://github.com/shubhyagami/streaming/actions> |
-| Issues | <https://github.com/shubhyagami/streaming/issues> |
-| API docs | <https://github.com/shubhyagami/streaming/blob/main/docs/api.md> |
+- **Repository** – <https://github.com/shubhyagami/streaming>  
+- **Docker image** – <https://hub.docker.com/r/hereyes/streaming>  
+- **CI status** – <https://github.com/shubhyagami/streaming/actions>  
+- **API docs** – <https://github.com/shubhyagami/streaming/blob/main/docs/api.md>
 
 ---
 
 ## Features
 
-| Feature | Description |
-|---|---|
-| **Multi‑source playback** | Search and play from YouTube or Spotify, with a YouTube fallback when Spotify fails or the quota is exceeded. |
-| **Real‑time equalizer** | 25 presets plus a 32‑band graphic EQ that updates live. |
-| **Retro UI** | Spinning cassette reel, animated equalizer, off‑screen album art. |
-| **Session persistence** | Track, position, and EQ settings are restored after a page reload. |
+- **Multi‑source playback** – Search and play from YouTube or Spotify, with a YouTube fallback when Spotify fails or the quota is exceeded.  
+- **Real‑time equalizer** – 25 preset EQs plus a live‑updating 32‑band graphic equalizer.  
+- **Retro UI** – Spinning cassette reel, animated equalizer, and off‑screen album art.  
+- **Session persistence** – Track, position, and EQ settings survive page reloads.
 
 ---
 
 ## Tech stack
 
-| Layer | Technology |
-|---|---|
-| Backend | Java 26, Spring Boot 3, Gradle 9 |
-| Container | Docker |
-| Front‑end | Vanilla JavaScript, Web Audio API, CSS |
-| CI | GitHub Actions |
-| VCS | Git |
+- **Backend** : Java 26, Spring Boot 3, Gradle 9  
+- **Front‑end** : Vanilla JavaScript, Web Audio API, CSS  
+- **Container** : Docker  
+- **CI/CD** : GitHub Actions  
+- **Version control** : Git
 
 ---
 
 ## Getting started
 
 > **Prerequisites**  
-> - Java 26 (or newer)  
-> - Gradle 9 (or the Gradle wrapper)  
-> - Docker (optional, for containerised deployment)
+> • Java 26 (or newer)  
+> • Gradle 9 (or the Gradle wrapper)  
+> • Docker (optional)
 
 ### Clone and run locally
 
@@ -56,7 +49,7 @@ cd streaming
 ./gradlew bootRun
 ```
 
-Open <http://localhost:8080> and start searching for tracks.
+Open <http://localhost:8080> in a browser to start searching for tracks.
 
 ### Docker
 
@@ -78,52 +71,53 @@ docker run -p 8080:8080 hereyes/streaming
 
 ## Development
 
-### Running tests
+### Run tests
 
 ```bash
 ./gradlew test
 ```
 
-### Linting & code quality
+### Code quality
 
 ```bash
 ./gradlew spotlessApply
 ./gradlew checkstyleMain
 ```
 
-### Adding a new source provider
+### Add a new source provider
 
-1. Create a new implementation of `TrackSource` (e.g., for Apple Music).  
-2. Wire it into `SourceConfig`.  
+1. Implement a new class that extends `TrackSource` (e.g., for Apple Music).  
+2. Register it in `SourceConfig`.  
 3. Run the test suite to verify integration.
 
 ---
 
 ## Contributing
 
-1. Fork the repository and create a feature branch.  
-2. Add tests covering your changes.  
-3. Ensure all checks pass locally (`./gradlew check`).  
-4. Open a pull request against `main`.  
-5. Keep commits focused and follow the commit‑style guidelines.
+1. Fork and branch off `main`.  
+2. Write tests for any changes.  
+3. Run `./gradlew check` locally – all tests and checks must pass.  
+4. Submit a pull request.  
+5. Keep commits small, focused, and use the conventional‑commit style.
 
-See `CONTRIBUTING.md` for additional details.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ---
 
 ## License
 
-HerEyes is released under the MIT License. See the [LICENSE](LICENSE) file.
+HerEyes is released under the MIT License.  
+See the [LICENSE](LICENSE) file.
 
 ---
 
 ## Changelog
 
-| Version | Date | Notes |
-|---|---|---|
-| **1.0.0** | 2026‑08‑29 | Initial release, Docker support |
-| 0.9.0 | 2026‑08‑06 | Added three new EQ presets, optimized GC logs |
-| 0.8.0 | 2026‑07‑22 | Refactored source selection logic |
+| Version | Date       | Notes                               |
+|---------|------------|-------------------------------------|
+| **1.0.0** | 2026‑08‑29 | Initial release, Docker support     |
+| 0.9.0   | 2026‑08‑06 | Added three EQ presets, optimized GC |
+| 0.8.0   | 2026‑07‑22 | Refactored source selection logic   |
 
 ---
 
