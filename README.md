@@ -1,38 +1,40 @@
 # HerEyes – Audio Streaming Server
 
-HerEyes provides a minimal Spring Boot backend that streams audio from **YouTube** and **Spotify**.  
-A vanilla‑JavaScript front‑end recreates a cassette‑player vibe: spinning reel, animated 32‑band equalizer, and album art that slides in from the side.  
-Player state (track, position, EQ) is saved in `localStorage`, so you resume exactly where you left off.
+**HerEyes** is a lightweight Spring Boot backend that streams audio from YouTube and Spotify.  
+The client is a vanilla‑JavaScript app that emulates a cassette player: a spinning reel, a 32‑band equalizer, and sliding album art.  
+All player state (track, position, EQ) is persisted in `localStorage`, so your session survives a page reload.
 
 ---
 
 ## Quick links
 
-- **GitHub repo** – <https://github.com/shubhyagami/streaming>
-- **Docker image** – <https://hub.docker.com/r/hereyes/streaming>
-- **GitHub Actions** – <https://github.com/shubhyagami/streaming/actions>
-- **API docs** – <https://github.com/shubhyagami/streaming/blob/main/docs/api.md>
+- [Source code](https://github.com/shubhyagami/streaming)  
+- [Docker image](https://hub.docker.com/r/hereyes/streaming)  
+- [GitHub Actions](https://github.com/shubhyagami/streaming/actions)  
+- [API docs](https://github.com/shubhyagami/streaming/blob/main/docs/api.md)
 
 ---
 
 ## Features
 
-- Play from **YouTube** or **Spotify**; fallback to YouTube if Spotify fails or quota is exhausted.
-- Real‑time equalizer: 25 preset EQs and a live‑updating 32‑band graphic equalizer.
-- Retro cassette‑style UI with spinning reel and off‑screen album art.
-- Persistent session: track, position, and EQ settings survive page reloads.
+| Feature | Description |
+|---------|-------------|
+| Multi‑source | Search & stream from YouTube or Spotify (fallback to YouTube if Spotify fails). |
+| Real‑time EQ | 25 preset equalizers plus a live 32‑band graphic equalizer. |
+| Retro UI | Cassette‑style reel animation and sliding album art. |
+| Persistent state | Track, position and EQ settings are stored locally and restored on reload. |
 
 ---
 
-## Tech stack
+## Architecture
 
-| Layer        | Technology |
-|--------------|------------|
-| Backend      | Java 26, Spring Boot 3, Gradle 9 |
-| Front‑end    | Vanilla JavaScript, Web Audio API, CSS |
-| Container    | Docker |
-| CI/CD        | GitHub Actions |
-| Versioning   | Git |
+| Layer | Technology |
+|-------|------------|
+| Backend | Java 26, Spring Boot 3, Gradle 9 |
+| Front‑end | Vanilla JavaScript, Web Audio API, CSS |
+| Container | Docker |
+| CI/CD | GitHub Actions |
+| Source control | Git |
 
 ---
 
@@ -40,9 +42,9 @@ Player state (track, position, EQ) is saved in `localStorage`, so you resume exa
 
 ### Prerequisites
 
-- Java 26 (or newer)
-- Gradle 9 (or the Gradle wrapper bundled with the repo)
-- Docker (optional, for containerized deployment)
+* Java 26 or newer
+* Gradle 9 (or the Gradle wrapper included)
+* Docker (optional, for container deployment)
 
 ### Run locally
 
@@ -53,7 +55,7 @@ cd streaming
 ./gradlew bootRun
 ```
 
-Open <http://localhost:8080> in a browser to begin searching for tracks.
+Open <http://localhost:8080> in a browser.
 
 ### Run with Docker
 
@@ -66,10 +68,10 @@ docker run -p 8080:8080 hereyes/streaming
 
 ## Usage
 
-1. **Search** – type a query into the search bar.
-2. **Play** – click a result; album art slides in and playback starts.
-3. **Adjust EQ** – select a preset or move the sliders.
-4. **Persist** – refresh the page; the last track and EQ settings load automatically.
+1. **Search** – type a query in the search bar.  
+2. **Play** – click a result; album art slides in and playback starts automatically.  
+3. **Adjust EQ** – choose a preset or manipulate the sliders.  
+4. **Persist** – reload the page, and the last track with its EQ settings is restored.
 
 ---
 
@@ -81,30 +83,30 @@ docker run -p 8080:8080 hereyes/streaming
 ./gradlew test
 ```
 
-### Code quality
+### Code quality checks
 
 ```bash
 ./gradlew spotlessApply
 ./gradlew checkstyleMain
 ```
 
-### Add a new source provider
+### Adding a new track source
 
-1. Create a class that extends `TrackSource` (e.g., for Apple Music).
-2. Register it in `SourceConfig`.
-3. Run the test suite to confirm integration.
+1. Create a class that implements `TrackSource` (e.g., for Apple Music).  
+2. Register it in `SourceConfig`.  
+3. Run the test suite to verify integration.
 
 ---
 
 ## Contributing
 
-1. Fork and branch off `main`.
-2. Write tests for any changes.
-3. Run `./gradlew check` locally – all tests and checks must pass.
-4. Submit a pull request.
-5. Keep commits small, focused, and use conventional‑commit style.
+1. Fork the repo and create a branch off `main`.  
+2. Add tests for your changes.  
+3. Ensure all checks pass locally (`./gradlew check`).  
+4. Submit a pull request.  
+5. Follow the conventional‑commit style for commit messages.
 
-See the [CONTRIBUTING.md](CONTRIBUTING.md) file for details.
+See the [CONTRIBUTING.md](CONTRIBUTING.md) file for more details.
 
 ---
 
@@ -117,11 +119,11 @@ See the [LICENSE](LICENSE) file.
 
 ## Changelog
 
-| Version | Date       | Notes                                 |
-|---------|------------|---------------------------------------|
-| **1.0.0** | 2026‑08‑29 | Initial release, Docker support       |
-| 0.9.0   | 2026‑08‑06 | Added three EQ presets, optimized GC |
-| 0.8.0   | 2026‑07‑22 | Refactored source selection logic    |
+| Version | Date | Notes |
+|---------|------|-------|
+| **1.0.0** | 2026‑08‑29 | Initial release, Docker support |
+| 0.9.0 | 2026‑08‑06 | Added three EQ presets, optimized GC |
+| 0.8.0 | 2026‑07‑22 | Refactored source selection logic |
 
 ---
 
