@@ -1,15 +1,23 @@
 # HerEyes – Audio Streaming Server
 
-**HerEyes** is a lightweight Spring Boot backend that streams audio from YouTube and Spotify, paired with a vanilla‑JavaScript front‑end that mimics a cassette player. The UI features a spinning reel, a 32‑band graphic equalizer, and sliding album art. All player state (track, position, EQ) is persisted in `localStorage`, so a session survives a page reload.
+**HerEyes** is a lightweight Spring Boot backend that streams audio from YouTube and Spotify. It is paired with a vanilla‑JavaScript front‑end that mimics a cassette player – rotating reel, sliding album art, and a 32‑band graphic equalizer. All player state (currently playing track, position, EQ settings) is stored in `localStorage`, so a session survives a page refresh.
 
 ---
 
-## Quick links
+## Table of Contents
 
-- [Source code](https://github.com/shubhyagami/streaming)
-- [Docker image](https://hub.docker.com/r/hereyes/streaming)
-- [GitHub Actions](https://github.com/shubhyagami/streaming/actions)
-- [API documentation](https://github.com/shubhyagami/streaming/blob/main/docs/api.md)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+  - [Run locally](#run-locally)
+  - [Run with Docker](#run-with-docker)
+- [Usage](#usage)
+- [Development](#development)
+  - [Testing](#testing)
+  - [Formatting & Linting](#formatting--linting)
+- [Contributing](#contributing)
+- [License](#license)
+- [Changelog](#changelog)
 
 ---
 
@@ -18,9 +26,9 @@
 | ✅ | Feature |
 |---|---------|
 | | Streaming from **YouTube** and **Spotify** (fallback to YouTube if Spotify fails) |
-| | Live 32‑band graphic equalizer plus 25 preset EQ profiles |
+| | Live 32‑band graphic equalizer with 25 preset profiles |
 | | Cassette‑style UI: spinning reel, sliding album art |
-| | Player state persisted locally (track, position, EQ) |
+| | Player state persisted in `localStorage` (track, position, EQ) |
 
 ---
 
@@ -36,13 +44,13 @@
 
 ---
 
-## Getting started
+## Quick Start
 
 ### Prerequisites
 
 - Java 26 (or newer)
 - Gradle 9 (or the bundled Gradle wrapper)
-- Docker (optional, for container deployment)
+- Docker (optional)
 
 ### Run locally
 
@@ -52,7 +60,7 @@ cd streaming
 ./gradlew bootRun   # builds and starts the server
 ```
 
-Open <http://localhost:8080> in a browser.
+Navigate to <http://localhost:8080> in your browser.
 
 ### Run with Docker
 
@@ -67,17 +75,22 @@ docker run -p 8080:8080 hereyes/streaming
 
 1. **Search** – type a query into the search bar.  
 2. **Play** – click a result; playback starts automatically and the album art slides in.  
-3. **Adjust EQ** – select a preset or manipulate the sliders.  
+3. **Adjust EQ** – select a preset or drag the sliders.  
 4. **Persist** – refresh the page; the last track and EQ settings are restored automatically.
 
 ---
 
 ## Development
 
-```bash
-# Run tests
-./gradlew test
+### Testing
 
+```bash
+./gradlew test
+```
+
+### Formatting & Linting
+
+```bash
 # Apply code formatting
 ./gradlew spotlessApply
 
@@ -85,7 +98,7 @@ docker run -p 8080:8080 hereyes/streaming
 ./gradlew checkstyleMain
 ```
 
-### Adding a new source
+### Adding a new `TrackSource`
 
 1. Create a class that implements `TrackSource`.  
 2. Register it in `SourceConfig`.  
@@ -98,10 +111,9 @@ docker run -p 8080:8080 hereyes/streaming
 1. Fork the repository and create a feature branch off `main`.  
 2. Add unit tests for your changes.  
 3. Run `./gradlew check` locally to ensure all checks pass.  
-4. Open a pull request.  
-5. Follow the conventional‑commit message style.
+4. Open a pull request and follow the conventional‑commit message style.
 
-See the [CONTRIBUTING.md](CONTRIBUTING.md) file for more information.
+See the [CONTRIBUTING.md](CONTRIBUTING.md) file for detailed guidelines.
 
 ---
 
@@ -113,8 +125,10 @@ HerEyes is released under the [MIT License](LICENSE).
 
 ## Changelog
 
-- **1.0.0** – 2026‑08‑29 – Initial release with Docker support.  
-- **0.9.0** – 2026‑08‑06 – Added three EQ presets, optimized GC.
+| Version | Date | Notes |
+|---------|------|-------|
+| **1.0.0** | 2026‑08‑29 | Initial release with Docker support |
+| **0.9.0** | 2026‑08‑06 | Added three EQ presets, optimized GC |
 
 ---
 
