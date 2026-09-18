@@ -1,68 +1,52 @@
 # HerEyes – Audio Streaming Server
 
-**HerEyes** is a lightweight Spring Boot backend that streams audio from YouTube and Spotify. It is paired with a vanilla‑JavaScript front‑end that mimics a cassette player – rotating reel, sliding album art, and a 32‑band graphic equalizer. All player state (currently playing track, position, EQ settings) is stored in `localStorage`, so a session survives a page refresh.
-
----
-
-## Table of Contents
-
-- [Features](#features)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-  - [Run locally](#run-locally)
-  - [Run with Docker](#run-with-docker)
-- [Usage](#usage)
-- [Development](#development)
-  - [Testing](#testing)
-  - [Formatting & Linting](#formatting--linting)
-- [Contributing](#contributing)
-- [License](#license)
-- [Changelog](#changelog)
+**HerEyes** is a lightweight Spring Boot backend that streams audio from YouTube and Spotify.  
+A simple vanilla‑JavaScript front‑end emulates a cassette player with a spinning reel, sliding album art, and a 32‑band graphic equalizer.  
+All player state (current track, position, EQ settings) is persisted in `localStorage`, so a session survives page refreshes.
 
 ---
 
 ## Features
 
-| ✅ | Feature |
-|---|---------|
-| | Streaming from **YouTube** and **Spotify** (fallback to YouTube if Spotify fails) |
-| | Live 32‑band graphic equalizer with 25 preset profiles |
-| | Cassette‑style UI: spinning reel, sliding album art |
-| | Player state persisted in `localStorage` (track, position, EQ) |
+- **Multi‑source streaming** – play tracks from YouTube or Spotify; falls back to YouTube if a Spotify request fails.  
+- **Live 32‑band graphic equalizer** – 25 preset profiles plus manual sliders.  
+- **Cassette‑style UI** – spinning reel, sliding album art, and cinematic track progress.  
+- **Persistence** – `localStorage` keeps track, position, and EQ settings across reloads.  
 
 ---
 
-## Architecture
+## Architecture Overview
 
-| Layer | Technology |
-|-------|-------------|
-| Backend | Java 26 / Spring Boot 3 (Gradle 9) |
-| Front‑end | Vanilla JavaScript + Web Audio API |
-| CI / CD | GitHub Actions |
-| Container | Docker |
+| Layer       | Technology |
+|-------------|-------------|
+| Backend     | Java 26 / Spring Boot 3  (Gradle 9) |
+| Front‑end   | Vanilla JavaScript + Web Audio API |
+| CI / CD     | GitHub Actions |
+| Container   | Docker |
 | Source Control | Git |
 
+The backend exposes a REST API to fetch track metadata, stream audio, and handle EQ presets.  
+The front‑end consumes the API and drives the UI with the Web Audio API.
+
 ---
 
-## Quick Start
+## Getting Started
 
-### Prerequisites
-
-- Java 26 (or newer)
-- Gradle 9 (or the bundled Gradle wrapper)
-- Docker (optional)
-
-### Run locally
+> **Prerequisites**  
+> - Java 26 (or newer)  
+> - Gradle (or the bundled Gradle wrapper)  
+> - Optional: Docker
 
 ```bash
 git clone https://github.com/shubhyagami/streaming.git
 cd streaming
-./gradlew bootRun   # builds and starts the server
+# Start the server
+./gradlew bootRun   # uses the wrapper, no separate Gradle install needed
 ```
 
-Navigate to <http://localhost:8080> in your browser.
+Open <http://localhost:8080> to see the player.  
 
-### Run with Docker
+Alternatively build and run the Docker image:
 
 ```bash
 docker build -t hereyes/streaming .
@@ -82,7 +66,7 @@ docker run -p 8080:8080 hereyes/streaming
 
 ## Development
 
-### Testing
+### Run Tests
 
 ```bash
 ./gradlew test
@@ -98,7 +82,7 @@ docker run -p 8080:8080 hereyes/streaming
 ./gradlew checkstyleMain
 ```
 
-### Adding a new `TrackSource`
+### Adding a New `TrackSource`
 
 1. Create a class that implements `TrackSource`.  
 2. Register it in `SourceConfig`.  
@@ -111,9 +95,9 @@ docker run -p 8080:8080 hereyes/streaming
 1. Fork the repository and create a feature branch off `main`.  
 2. Add unit tests for your changes.  
 3. Run `./gradlew check` locally to ensure all checks pass.  
-4. Open a pull request and follow the conventional‑commit message style.
+4. Open a pull request and follow the [conventional‑commit] style.
 
-See the [CONTRIBUTING.md](CONTRIBUTING.md) file for detailed guidelines.
+See the detailed guidelines in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
@@ -125,9 +109,9 @@ HerEyes is released under the [MIT License](LICENSE).
 
 ## Changelog
 
-| Version | Date | Notes |
-|---------|------|-------|
-| **1.0.0** | 2026‑08‑29 | Initial release with Docker support |
+| Version | Date       | Notes                                 |
+|---------|------------|---------------------------------------|
+| **1.0.0** | 2026‑08‑29 | Initial release with Docker support   |
 | **0.9.0** | 2026‑08‑06 | Added three EQ presets, optimized GC |
 
 ---
@@ -139,3 +123,5 @@ HerEyes is released under the [MIT License](LICENSE).
 ![Docker Pulls](https://img.shields.io/docker/pulls/hereyes/streaming.svg)
 ![Issues](https://img.shields.io/github/issues/shubhyagami/streaming.svg)
 ![Stars](https://img.shields.io/github/stars/shubhyagami/streaming.svg?style=social)
+
+---
