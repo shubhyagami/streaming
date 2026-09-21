@@ -1,52 +1,73 @@
 # HerEyes – Audio Streaming Server
 
-**HerEyes** is a lightweight Spring Boot backend that streams audio from YouTube and Spotify.  
-A simple vanilla‑JavaScript front‑end emulates a cassette player with a spinning reel, sliding album art, and a 32‑band graphic equalizer.  
-All player state (current track, position, EQ settings) is persisted in `localStorage`, so a session survives page refreshes.
+**HerEyes** is a lightweight Spring Boot backend that streams audio from YouTube and Spotify, paired with a vanilla‑JavaScript front‑end that mimics a cassette player.  The player features a spinning reel, sliding album art, and a real‑time 32‑band graphic equalizer.  All state (track, position, EQ) is stored in `localStorage`, so a session survives page refreshes.
+
+> **TL;DR**  
+> ```bash
+> git clone https://github.com/shubhyagami/streaming
+> cd streaming
+> ./gradlew bootRun
+> # or
+> docker run -p 8080:8080 hereyes/streaming
+> ```
+> Open <http://localhost:8080>.
+
+---
+
+## Table of Contents
+1. [Features](#features)
+2. [Architecture](#architecture)
+3. [Getting Started](#getting-started)
+   - [Local Development](#local-development)
+   - [Docker](#docker)
+4. [Usage](#usage)
+5. [Development](#development)
+   - [Tests](#tests)
+   - [Formatting & Linting](#formatting--linting)
+   - [Adding a New TrackSource](#adding-a-new-tracksource)
+6. [Contributing](#contributing)
+7. [License](#license)
+8. [Changelog](#changelog)
 
 ---
 
 ## Features
 
-- **Multi‑source streaming** – play tracks from YouTube or Spotify; falls back to YouTube if a Spotify request fails.  
-- **Live 32‑band graphic equalizer** – 25 preset profiles plus manual sliders.  
-- **Cassette‑style UI** – spinning reel, sliding album art, and cinematic track progress.  
-- **Persistence** – `localStorage` keeps track, position, and EQ settings across reloads.  
+- **Multi‑source streaming** – play tracks from YouTube or Spotify; falls back to YouTube when a Spotify request fails.
+- **Live 32‑band graphic equalizer** – 25 preset profiles plus manual sliders.
+- **Cassette‑style UI** – spinning reel, sliding album art, cinematic progress bar.
+- **Persisted state** – `localStorage` keeps track, position, and EQ settings across reloads.
 
 ---
 
-## Architecture Overview
+## Architecture
 
 | Layer       | Technology |
-|-------------|-------------|
-| Backend     | Java 26 / Spring Boot 3  (Gradle 9) |
-| Front‑end   | Vanilla JavaScript + Web Audio API |
-| CI / CD     | GitHub Actions |
+|-------------|-----------|
+| Backend     | Java 26 / Spring Boot 3 (Gradle 9) |
+| Front‑end   | Vanilla JS + Web Audio API |
+| CI/CD       | GitHub Actions |
 | Container   | Docker |
-| Source Control | Git |
+| Version control | Git |
 
-The backend exposes a REST API to fetch track metadata, stream audio, and handle EQ presets.  
-The front‑end consumes the API and drives the UI with the Web Audio API.
+The backend exposes a REST API to retrieve track metadata, stream audio, and serve EQ presets.  The front‑end consumes this API and drives the UI using the Web Audio API.
 
 ---
 
 ## Getting Started
 
-> **Prerequisites**  
-> - Java 26 (or newer)  
-> - Gradle (or the bundled Gradle wrapper)  
-> - Optional: Docker
+### Local Development
 
 ```bash
-git clone https://github.com/shubhyagami/streaming.git
+git clone https://github.com/shubhyagami/streaming
 cd streaming
-# Start the server
-./gradlew bootRun   # uses the wrapper, no separate Gradle install needed
+./gradlew bootRun   # uses the Gradle wrapper
 ```
 
-Open <http://localhost:8080> to see the player.  
+Open <http://localhost:8080> – you should see the cassette‑style player.  
+The project uses Java 26 (or newer) and Gradle 9; the README assumes the Gradle wrapper is present.
 
-Alternatively build and run the Docker image:
+### Docker
 
 ```bash
 docker build -t hereyes/streaming .
@@ -59,7 +80,7 @@ docker run -p 8080:8080 hereyes/streaming
 
 1. **Search** – type a query into the search bar.  
 2. **Play** – click a result; playback starts automatically and the album art slides in.  
-3. **Adjust EQ** – select a preset or drag the sliders.  
+3. **Adjust EQ** – choose a preset or drag the sliders.  
 4. **Persist** – refresh the page; the last track and EQ settings are restored automatically.
 
 ---
@@ -118,10 +139,8 @@ HerEyes is released under the [MIT License](LICENSE).
 
 ## Badges
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Build](https://img.shields.io/github/actions/workflow/status/shubhyagami/streaming/ci.yml?branch=main&label=build)
 ![Docker Pulls](https://img.shields.io/docker/pulls/hereyes/streaming.svg)
-![Issues](https://img.shields.io/github/issues/shubhyagami/streaming.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Stars](https://img.shields.io/github/stars/shubhyagami/streaming.svg?style=social)
-
----
+![Issues](https://img.shields.io/github/issues/shubhyagami/streaming.svg)
